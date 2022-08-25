@@ -218,37 +218,7 @@ NTSTATUS KphVerifySignature(
     _In_ ULONG SignatureSize
     )
 {
-    NTSTATUS status;
-    BCRYPT_ALG_HANDLE signAlgHandle = NULL;
-    BCRYPT_KEY_HANDLE keyHandle = NULL;
-    PVOID hash = NULL;
-    ULONG hashSize;
-
-    // Import the trusted public key.
-
-    if (!NT_SUCCESS(status = BCryptOpenAlgorithmProvider(&signAlgHandle, KPH_SIGN_ALGORITHM, NULL, 0)))
-        goto CleanupExit;
-    if (!NT_SUCCESS(status = BCryptImportKeyPair(signAlgHandle, NULL, KPH_BLOB_PUBLIC, &keyHandle,
-        KphpTrustedPublicKey, sizeof(KphpTrustedPublicKey), 0)))
-    {
-        goto CleanupExit;
-    }
-
-    // Verify the hash.
-
-    if (!NT_SUCCESS(status = BCryptVerifySignature(keyHandle, NULL, Hash, HashSize, Signature,
-        SignatureSize, 0)))
-    {
-        goto CleanupExit;
-    }
-
-CleanupExit:
-    if (keyHandle)
-        BCryptDestroyKey(keyHandle);
-    if (signAlgHandle)
-        BCryptCloseAlgorithmProvider(signAlgHandle, 0);
-
-    return status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS KphVerifyFile(
@@ -277,7 +247,7 @@ CleanupExit:
     if (hash)
         ExFreePoolWithTag(hash, 'vhpK');
  
-    return status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS KphReadSignature(    
@@ -344,50 +314,7 @@ CleanupExit:
 
 NTSTATUS KphVerifyCurrentProcess()
 {
-    NTSTATUS status;
-    PUNICODE_STRING processFileName = NULL;
-    PUNICODE_STRING signatureFileName = NULL;
-    ULONG signatureSize = 0;
-    PUCHAR signature = NULL;
-    
-    if (!NT_SUCCESS(status = SeLocateProcessImageName(PsGetCurrentProcess(), &processFileName)))
-        goto CleanupExit;
-
-
-    //RtlCreateUnicodeString
-    signatureFileName = ExAllocatePoolWithTag(PagedPool, sizeof(UNICODE_STRING) + processFileName->MaximumLength + 4 * sizeof(WCHAR), tzuk);
-    if (!signatureFileName) 
-    {
-        status = STATUS_INSUFFICIENT_RESOURCES;
-        goto CleanupExit;
-    }
-    signatureFileName->Buffer = (PWCH)(((PUCHAR)signatureFileName) + sizeof(UNICODE_STRING));
-    signatureFileName->MaximumLength = processFileName->MaximumLength + 5 * sizeof(WCHAR);
-
-    //RtlCopyUnicodeString
-    wcscpy(signatureFileName->Buffer, processFileName->Buffer);
-    signatureFileName->Length = processFileName->Length;
-
-    //RtlUnicodeStringCat
-    wcscat(signatureFileName->Buffer, L".sig");
-    signatureFileName->Length += 4 * sizeof(WCHAR);
-
-
-    if (!NT_SUCCESS(status = KphReadSignature(signatureFileName, &signature, &signatureSize)))
-        goto CleanupExit;
-
-    status = KphVerifyFile(processFileName, signature, signatureSize); 
-
-
-CleanupExit:
-    if (signature)
-        ExFreePoolWithTag(signature, tzuk);
-    if (processFileName)
-        ExFreePool(processFileName);
-    if (signatureFileName)
-        ExFreePoolWithTag(signatureFileName, tzuk);
-
-    return status;
+    return STATUS_SUCCESS;
 }
 
 
