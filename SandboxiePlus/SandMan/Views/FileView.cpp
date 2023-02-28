@@ -10,16 +10,15 @@ CFileView::CFileView(QWidget *parent)
 	: QWidget(parent)
 {
     m_pMainLayout = new QGridLayout();
-	m_pMainLayout->setMargin(0);
+	m_pMainLayout->setContentsMargins(0,0,0,0);
 	this->setLayout(m_pMainLayout);
 
     m_pTreeView = new QTreeView();
     m_pTreeView->setAlternatingRowColors(theConf->GetBool("Options/AltRowColors", false));
     m_pMainLayout->addWidget(m_pTreeView, 0, 0);
 
-    m_pFileModel = new QFileSystemModel(this);
-    m_pFileModel->setFilter(QDir::NoDotAndDotDot | QDir::AllDirs | QDir::Files | QDir::Hidden | QDir::System);
-    m_pTreeView->setModel(m_pFileModel);
+    m_pFileModel = NULL;
+
     m_pTreeView->setSortingEnabled(true);
     m_pTreeView->setSelectionMode(QAbstractItemView::ExtendedSelection);
 
@@ -40,29 +39,46 @@ CFileView::CFileView(QWidget *parent)
 
 CFileView::~CFileView()
 {
+    SaveState();
+}
+
+void CFileView::SaveState()
+{
     theConf->SetBlob("MainWindow/FileTree_Columns", m_pTreeView->header()->saveState());
 }
 
 void CFileView::SetBox(const CSandBoxPtr& pBox)
 {
-    if (!m_pBox.isNull()) disconnect(m_pBox.data(), SIGNAL(AboutToBeCleaned()), this, SLOT(OnAboutToBeCleaned()));
+    if (!m_pBox.isNull()) disconnect(m_pBox.data(), SIGNAL(AboutToBeModified()), this, SLOT(OnAboutToBeModified()));
 
 	m_pBox = pBox;
 
-    if (!m_pBox.isNull()) connect(m_pBox.data(), SIGNAL(AboutToBeCleaned()), this, SLOT(OnAboutToBeCleaned()));
+    if (!m_pBox.isNull()) connect(m_pBox.data(), SIGNAL(AboutToBeModified()), this, SLOT(OnAboutToBeModified()));
 
     QString Root;
     if (!pBox.isNull() && !pBox->IsEmpty())
         Root = pBox->GetFileRoot();
-    if (Root.isEmpty()) {
-        Root = theAPI->GetSbiePath();
-        m_pTreeView->setEnabled(false);
-    }
-    else
-        m_pTreeView->setEnabled(true);
-    m_pTreeView->setRootIndex(m_pFileModel->setRootPath(Root));
+    //if (Root.isEmpty()) {
+    //    //Root = theAPI->GetSbiePath();
+    //    m_pTreeView->setEnabled(false);
+    //}
+    //else
+    //    m_pTreeView->setEnabled(true);
 
-    if (m_pTreeView->isEnabled()) {
+    if (m_pFileModel) {
+        m_pFileModel->deleteLater();
+        m_pFileModel = NULL;
+    }
+    if (!Root.isEmpty()) {
+        m_pFileModel = new QFileSystemModel(this);
+        m_pFileModel->setFilter(QDir::NoDotAndDotDot | QDir::AllDirs | QDir::Files | QDir::Hidden | QDir::System);
+    }
+    m_pTreeView->setModel(m_pFileModel);
+
+    if (!Root.isEmpty()) 
+    {
+        m_pTreeView->setRootIndex(m_pFileModel->setRootPath(Root));
+
         m_pTreeView->expand(m_pFileModel->index(Root + "/drive"));
         m_pTreeView->expand(m_pFileModel->index(Root + "/share"));
         m_pTreeView->expand(m_pFileModel->index(Root + "/user"));
@@ -71,7 +87,7 @@ void CFileView::SetBox(const CSandBoxPtr& pBox)
     }
 }
 
-void CFileView::OnAboutToBeCleaned()
+void CFileView::OnAboutToBeModified()
 {
     if (sender() == m_pBox.data())
         SetBox(CSandBoxPtr());
@@ -84,6 +100,7 @@ void CFileView::OnAboutToBeCleaned()
 #define MENU_RECOVER            1
 #define MENU_RECOVER_TO_ANY     2
 #define MENU_CREATE_SHORTCUT    3
+#define MENU_CHECK_FILE         4
 
 void addSeparatorToShellContextMenu(HMENU hMenu)
 {
@@ -106,7 +123,7 @@ void addItemToShellContextMenu(HMENU hMenu, const wchar_t *name, int ID)
     InsertMenuItem(hMenu, 0, TRUE, &menu_item_info);
 }
 
-int openShellContextMenu(const QStringList& Files, void * parentWindow)
+int openShellContextMenu(const QStringList& Files, void * parentWindow, const CSandBoxPtr& pBox)
 {
     std::list<CComHeapPtr<ITEMIDLIST_ABSOLUTE>> items;
     items.resize(Files.count());
@@ -150,6 +167,11 @@ int openShellContextMenu(const QStringList& Files, void * parentWindow)
         std::wstring Str3 = CFileView::tr("Recover to Same Folder").toStdWString();
         addItemToShellContextMenu(hMenu, Str3.c_str(), MENU_RECOVER);
         
+        if (!pBox->GetTextList("OnFileRecovery", true, false, true).isEmpty()) {
+            std::wstring Str4 = CFileView::tr("Run Recovery Checks").toStdWString();
+            addItemToShellContextMenu(hMenu, Str4.c_str(), MENU_CHECK_FILE);
+        }
+
         POINT point;
         GetCursorPos(&point);
         int iCmd = TrackPopupMenuEx(hMenu, TPM_RETURNCMD, point.x, point.y, (HWND)parentWindow, NULL);
@@ -178,6 +200,8 @@ int openShellContextMenu(const QStringList& Files, void * parentWindow)
 
 void CFileView::OnFileMenu(const QPoint&)
 {
+    if (!m_pFileModel) return;
+
     QStringList Files;
     foreach(const QModelIndex & Index, m_pTreeView->selectionModel()->selectedIndexes()) {
         QString BoxedPath = m_pFileModel->fileInfo(Index).absoluteFilePath().replace("/", "\\");
@@ -199,7 +223,7 @@ void CFileView::OnFileMenu(const QPoint&)
     if (Files.isEmpty())
         return;
 
-    int iCmd = openShellContextMenu(Files, (void*)this->winId());
+    int iCmd = openShellContextMenu(Files, (void*)this->winId(), m_pBox);
     if (iCmd == 0)
         return;
 
@@ -242,6 +266,13 @@ void CFileView::OnFileMenu(const QPoint&)
 
             break;
         }
+        case MENU_CHECK_FILE:
+        {
+            SB_PROGRESS Status = theGUI->CheckFiles(m_pBox->GetName(), Files);
+            if (Status.GetStatus() == OP_ASYNC)
+                theGUI->AddAsyncOp(Status.GetValue());
+            break;
+        }
         case MENU_CREATE_SHORTCUT:
         {
             QString BoxName = m_pBox->GetName();
@@ -249,7 +280,7 @@ void CFileView::OnFileMenu(const QPoint&)
             QString LinkName = LinkPath.mid(LinkPath.lastIndexOf("\\") + 1);
 
 			QString Path = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation).replace("/", "\\");
-			//Path = QFileDialog::getExistingDirectory(this, tr("Select Directory to create Shorcut in"), Path).replace("/", "\\");
+			//Path = QFileDialog::getExistingDirectory(this, tr("Select Directory to create Shortcut in"), Path).replace("/", "\\");
 			//if (Path.isEmpty())
 			//	return;
 
@@ -271,6 +302,8 @@ void CFileView::OnFileMenu(const QPoint&)
 
 void CFileView::OnFileDblClick(const QModelIndex &)
 {
+    if (!m_pFileModel) return;
+
     QString BoxedPath = m_pFileModel->fileInfo(m_pTreeView->currentIndex()).absoluteFilePath();
 
     ShellExecute(NULL, NULL, BoxedPath.toStdWString().c_str(), NULL, m_pBox->GetFileRoot().toStdWString().c_str(), SW_SHOWNORMAL);

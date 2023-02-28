@@ -209,6 +209,20 @@ CleanupExit:
 
 
 //---------------------------------------------------------------------------
+// GetJSONObjectSafe
+//---------------------------------------------------------------------------
+
+
+JSONObject GetJSONObjectSafe(const JSONObject& root, const std::wstring& key)
+{
+	auto I = root.find(key);
+	if (I == root.end() || !I->second->IsObject())
+		return JSONObject();
+	return I->second->AsObject();
+}
+
+
+//---------------------------------------------------------------------------
 // GetJSONStringSafe
 //---------------------------------------------------------------------------
 
@@ -236,12 +250,17 @@ BOOLEAN CUpdater::QueryUpdateData(UPDATER_DATA* Context)
 	char* jsonString = NULL;
 	JSONValue* jsonObject = NULL;
 	JSONObject jsonRoot;
+	JSONObject release;
+	JSONObject installer;
 
-	Path.Format(L"/update.php?software=sandboxie&version=%S&system=windows-%d.%d.%d-%s&language=%d&auto=%s", MY_VERSION_STRING, 
-#ifdef _WIN64
-		m_osvi.dwMajorVersion, m_osvi.dwMinorVersion, m_osvi.dwBuildNumber, L"x86_64",
+	Path.Format(L"/update.php?action=update&software=sandboxie&channel=stable&version=%S&system=windows-%d.%d.%d-%s&language=%d&auto=%s", 
+		MY_VERSION_STRING, m_osvi.dwMajorVersion, m_osvi.dwMinorVersion, m_osvi.dwBuildNumber,
+#ifdef _M_ARM64
+		L"ARM64",
+#elif _WIN64
+		L"x86_64",
 #else
-		m_osvi.dwMajorVersion, m_osvi.dwMinorVersion, m_osvi.dwBuildNumber, L"i386",
+		L"i386",
 #endif
 		SbieDll_GetLanguage(NULL), Context->Manual ? L"0" : L"1");
 
@@ -266,11 +285,14 @@ BOOLEAN CUpdater::QueryUpdateData(UPDATER_DATA* Context)
 	Context->userMsg = GetJSONStringSafe(jsonRoot, L"userMsg").c_str();
 	Context->infoUrl = GetJSONStringSafe(jsonRoot, L"infoUrl").c_str();
 
-	Context->version = GetJSONStringSafe(jsonRoot, L"version").c_str();
+	release = GetJSONObjectSafe(jsonRoot, L"release");
+	Context->updateMsg = GetJSONStringSafe(release, L"infoMsg").c_str();
+	Context->updateUrl = GetJSONStringSafe(release, L"infoUrl").c_str();
+	Context->version = GetJSONStringSafe(release, L"version").c_str();
 	//Context->updated = (uint64_t)jsonRoot[L"updated"]->AsNumber();
-	Context->updateMsg = GetJSONStringSafe(jsonRoot, L"updateMsg").c_str();
-	Context->updateUrl = GetJSONStringSafe(jsonRoot, L"updateUrl").c_str();
-	Context->downloadUrl = GetJSONStringSafe(jsonRoot, L"downloadUrl").c_str();
+
+	installer = GetJSONObjectSafe(release, L"installer");
+	Context->downloadUrl = GetJSONStringSafe(installer, L"downloadUrl").c_str();
 
 	success = TRUE;
 

@@ -226,12 +226,16 @@ static DLL Ldr_Dlls[] = {
     { L"osppc.dll",             "osppc.dll",            Scm_OsppcDll,                   0}, // ensure osppsvc is running
     { L"mso.dll",               "mso.dll",              File_MsoDll,                    0}, // hack for File_IsRecoverable
     { L"agcore.dll",            "agcore.dll",           Custom_SilverlightAgCore,       0}, // msft silverlight - deprecated
+
+    // $Workaround$ - 3rd party fix
+#ifndef _M_ARM64
     // Non Microsoft DLLs:
     { L"acscmonitor.dll",       "acscmonitor.dll",      Acscmonitor_Init,               0},
     { L"IDMIECC.dll",           "IDMIECC.dll",          Custom_InternetDownloadManager, 0},
     { L"snxhk.dll",             "snxhk.dll",            Custom_Avast_SnxHk,             0},
     { L"snxhk64.dll",           "snxhk64.dll",          Custom_Avast_SnxHk,             0},
     { L"sysfer.dll",            "sysfer.dll",           Custom_SYSFER_DLL,              0},
+#endif
 #ifdef _WIN64
     { L"dgapi64.dll",           "dgapi64.dll",          DigitalGuardian_Init,           0},
 #else
@@ -276,19 +280,22 @@ void CALLBACK Ldr_LdrDllNotification(ULONG NotificationReason, PLDR_DLL_NOTIFICA
 {
     ULONG_PTR LdrCookie = 0;
     NTSTATUS status = 0;
-
+    WCHAR text[4096];
 
     if (NotificationReason == 1) {
         status = __sys_LdrLockLoaderLock(0, NULL, &LdrCookie);
         Ldr_MyDllCallbackNew(NotificationData->Loaded.BaseDllName->Buffer, (HMODULE)NotificationData->Loaded.DllBase, TRUE);
         __sys_LdrUnlockLoaderLock(0, LdrCookie);
 
-        return;
+        Sbie_snwprintf(text, ARRAYSIZE(text), L"%s (loaded)", NotificationData->Loaded.BaseDllName->Buffer);
     }
     else if (NotificationReason == 2) {
-        Ldr_MyDllCallbackNew(NotificationData->Unloaded.BaseDllName->Buffer, (HMODULE)NotificationData->Loaded.DllBase, FALSE);
+        Ldr_MyDllCallbackNew(NotificationData->Unloaded.BaseDllName->Buffer,  (HMODULE)NotificationData->Loaded.DllBase, FALSE);
+
+        Sbie_snwprintf(text, ARRAYSIZE(text), L"%s (unloaded)", NotificationData->Loaded.BaseDllName->Buffer);
     }
-    return;
+
+    SbieApi_MonitorPutMsg(MONITOR_IMAGE, text);
 }
 
 //---------------------------------------------------------------------------
@@ -382,7 +389,7 @@ BOOL LdrCheckImmersive()
 
 _FX BOOLEAN Ldr_Init()
 {
-    HMODULE module = NULL;
+    HMODULE module = Dll_Ntdll;
 
     UCHAR *ReadImageFileExecOptions;
 
@@ -484,6 +491,16 @@ _FX BOOLEAN Ldr_Init()
     }
     else {
         LdrCheckImmersive();
+    }
+
+
+    //
+    // set PEB.ProcessParameters->LoaderThreads = 0
+    //
+
+    if (SbieApi_QueryConfBool(NULL, L"NoParallelLoading", FALSE)) {
+        RTL_USER_PROCESS_PARAMETERS* ProcessParms = Proc_GetRtlUserProcessParameters();
+        ProcessParms->LoaderThreads = 0;
     }
 
     //
@@ -776,6 +793,38 @@ _FX void Ldr_CallDllCallbacks_WithLock(void)
 
 
 //---------------------------------------------------------------------------
+// Ldr_LdrLoadDllImpl
+//---------------------------------------------------------------------------
+
+
+_FX NTSTATUS Ldr_LdrLoadDllImpl(
+    WCHAR* PathString,
+    ULONG* DllFlags,
+    UNICODE_STRING* ModuleName,
+    HANDLE* ModuleHandle)
+{
+    NTSTATUS status = 0;
+
+    //WCHAR text[4096];
+    //Sbie_snwprintf(text, ARRAYSIZE(text), L"%s (loading...)", (ModuleName && ModuleName->Buffer) ? ModuleName->Buffer : PathString);
+    //SbieApi_MonitorPutMsg(MONITOR_IMAGE, text);
+
+    status = __sys_LdrLoadDll(PathString, DllFlags, ModuleName, ModuleHandle);
+
+    if (!NT_SUCCESS(status)) {
+        WCHAR text[4096];
+        Sbie_snwprintf(text, ARRAYSIZE(text), L"%s (load failed 0x%08X)", (ModuleName && ModuleName->Buffer) ? ModuleName->Buffer : PathString, status);
+        SbieApi_MonitorPutMsg(MONITOR_IMAGE, text);
+    }
+
+    //Sbie_snwprintf(text, ARRAYSIZE(text), L"%s (... 0x%08X)", (ModuleName && ModuleName->Buffer) ? ModuleName->Buffer : PathString, status);
+    //SbieApi_MonitorPutMsg(MONITOR_IMAGE, text);
+
+    return status;
+}
+
+
+//---------------------------------------------------------------------------
 // Ldr_LdrLoadDll
 //---------------------------------------------------------------------------
 
@@ -797,7 +846,7 @@ _FX NTSTATUS Ldr_LdrLoadDll(
     status = __sys_LdrLockLoaderLock(0, &state, &LdrCookie);
     if (NT_SUCCESS(status)) {
 
-        status = __sys_LdrLoadDll(PathString, DllFlags, ModuleName, ModuleHandle);
+        status = Ldr_LdrLoadDllImpl(PathString, DllFlags, ModuleName, ModuleHandle);
 
         if (NT_SUCCESS(status)) {
             Ldr_CallDllCallbacks();
@@ -826,7 +875,7 @@ _FX NTSTATUS Ldr_Win10_LdrLoadDll(
     //
     NTSTATUS status = 0;
 
-    status = __sys_LdrLoadDll(PathString, DllFlags, ModuleName, ModuleHandle);
+    status = Ldr_LdrLoadDllImpl(PathString, DllFlags, ModuleName, ModuleHandle);
     Scm_SecHostDll_W8();
     return status;
 }

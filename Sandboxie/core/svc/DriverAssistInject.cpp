@@ -1,6 +1,6 @@
 /*
  * Copyright 2004-2020 Sandboxie Holdings, LLC 
- * Copyright 2020 David Xanatos, xanasoft.com
+ * Copyright 2020-2023 David Xanatos, xanasoft.com
  *
  * This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -25,7 +25,6 @@
 #include "common/win32_ntddk.h"
 #include "misc.h"
 #include "ImageHlp.h"
-
 
 
 
@@ -71,7 +70,8 @@ void DriverAssist::InjectLow(void *_msg)
 	}
 
 	WCHAR boxname[48];
-	errlvl = SbieApi_QueryProcessEx2((HANDLE)msg->process_id, 0, boxname, NULL, NULL, NULL, NULL);
+    WCHAR exename[99];
+	errlvl = SbieApi_QueryProcessEx2((HANDLE)msg->process_id, 96, boxname, exename, NULL, NULL, NULL);
 	if (errlvl != 0)
 		goto finish;
 
@@ -81,8 +81,9 @@ void DriverAssist::InjectLow(void *_msg)
 
     SBIELOW_FLAGS sbieLow;
     sbieLow.init_flags = 0;
-
+#ifndef _M_ARM64
     sbieLow.is_wow64 = msg->is_wow64;
+#endif
     sbieLow.bHostInject = msg->bHostInject;
     // NoSysCallHooks BEGIN
     sbieLow.bNoSysHooks = SbieApi_QueryConfBool(boxname, L"NoSecurityIsolation", FALSE) || SbieApi_QueryConfBool(boxname, L"NoSysCallHooks", FALSE);
@@ -133,6 +134,13 @@ void DriverAssist::InjectLow(void *_msg)
 
 finish:
 
+#ifdef _M_ARM64
+    if (errlvl == -1)
+        SbieApi_LogEx(msg->session_id, 2338, L"%S (ARM32)", msg->process_name);
+    else if (errlvl == -2)
+        SbieApi_LogEx(msg->session_id, 2338, L"%S (CHPE)", msg->process_name);
+    else 
+#endif
     if (errlvl) {
 
         ULONG err = GetLastError();

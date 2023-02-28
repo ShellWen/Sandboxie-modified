@@ -16,29 +16,38 @@ void CSandMan::OnFileToRecover(const QString& BoxName, const QString& FilePath, 
 		//		});
 		//}
 
-		pWnd->AddFile(FilePath, BoxPath);
+		if (pWnd)
+			pWnd->AddFile(FilePath, BoxPath);
 	}
 	else
 		m_pPopUpWindow->AddFileToRecover(FilePath, BoxPath, pBox, ProcessId);
 }
 
-bool CSandMan::OpenRecovery(const CSandBoxPtr& pBox, bool& DeleteShapshots, bool bCloseEmpty)
+bool CSandMan::OpenRecovery(const CSandBoxPtr& pBox, bool& DeleteSnapshots, bool bCloseEmpty)
 {
 	auto pBoxEx = pBox.objectCast<CSandBoxPlus>();
 	if (!pBoxEx) return false;
 	if (pBoxEx->m_pRecoveryWnd != NULL) {
+		if (pBoxEx->m_pRecoveryWnd->IsDeleteDialog())
+			return false;
 		pBoxEx->m_pRecoveryWnd->close();
-		// todo: resuse window?
 	}
 
-	CRecoveryWindow* pRecoveryWindow = new CRecoveryWindow(pBox, false, this);
-	if (pRecoveryWindow->FindFiles() == 0 && bCloseEmpty) {
-		delete pRecoveryWindow;
+	CRecoveryWindow* pRecoveryWnd = pBoxEx->m_pRecoveryWnd = new CRecoveryWindow(pBox, false, this);
+	connect(this, SIGNAL(Closed()), pBoxEx->m_pRecoveryWnd, SLOT(close()));
+	if (pBoxEx->m_pRecoveryWnd->FindFiles() == 0 && bCloseEmpty) {
+		delete pBoxEx->m_pRecoveryWnd;
+		pBoxEx->m_pRecoveryWnd = NULL;
 		return true;
 	}
-	else if (pRecoveryWindow->exec() != 1)
-		return false;
-	DeleteShapshots = pRecoveryWindow->IsDeleteShapshots();
+	else {
+		connect(pBoxEx->m_pRecoveryWnd, &CRecoveryWindow::Closed, [pBoxEx]() {
+			pBoxEx->m_pRecoveryWnd = NULL;
+		});
+		if (pBoxEx->m_pRecoveryWnd->exec() != 1)
+			return false;
+	}
+	DeleteSnapshots = pRecoveryWnd->IsDeleteSnapshots();
 	return true;
 }
 
@@ -48,40 +57,143 @@ CRecoveryWindow* CSandMan::ShowRecovery(const CSandBoxPtr& pBox, bool bFind)
 	if (!pBoxEx) return NULL;
 	if (pBoxEx->m_pRecoveryWnd == NULL) {
 		pBoxEx->m_pRecoveryWnd = new CRecoveryWindow(pBox, bFind == false);
+		connect(this, SIGNAL(Closed()), pBoxEx->m_pRecoveryWnd, SLOT(close()));
 		connect(pBoxEx->m_pRecoveryWnd, &CRecoveryWindow::Closed, [pBoxEx]() {
 			pBoxEx->m_pRecoveryWnd = NULL;
 		});
 		pBoxEx->m_pRecoveryWnd->show();
 	}
-	/*else {
+	else if(bFind) { // We don't want to force window in front on instant recovery 
 		pBoxEx->m_pRecoveryWnd->setWindowState((pBoxEx->m_pRecoveryWnd->windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
-		//SetForegroundWindow((HWND)pBoxEx->m_pRecoveryWnd->winId());
-	}*/
+		SetForegroundWindow((HWND)pBoxEx->m_pRecoveryWnd->winId());
+	}
 	if(bFind)
 		pBoxEx->m_pRecoveryWnd->FindFiles();
 	return pBoxEx->m_pRecoveryWnd;
 }
 
-SB_PROGRESS CSandMan::RecoverFiles(const QString& BoxName, const QList<QPair<QString, QString>>& FileList, int Action)
+SB_PROGRESS CSandMan::CheckFiles(const QString& BoxName, const QStringList& Files)
 {
 	CSbieProgressPtr pProgress = CSbieProgressPtr(new CSbieProgress());
-	QtConcurrent::run(CSandMan::RecoverFilesAsync, pProgress, BoxName, FileList, Action);
+	CSandBoxPtr pBox = theAPI->GetBoxByName(BoxName);
+	QStringList Checkers;
+	if (!pBox.isNull()) {
+		foreach(const QString & Value, pBox->GetTextList("OnFileRecovery", true, false, true)) {
+			Checkers.append(pBox->Expand(Value));
+		}
+	}
+	QtConcurrent::run(CSandMan::CheckFilesAsync, pProgress, BoxName, Files, Checkers);
 	return SB_PROGRESS(OP_ASYNC, pProgress);
 }
 
-void CSandMan::RecoverFilesAsync(const CSbieProgressPtr& pProgress, const QString& BoxName, const QList<QPair<QString, QString>>& FileList, int Action)
+void CSandMan::CheckFilesAsync(const CSbieProgressPtr& pProgress, const QString& BoxName, const QStringList& Files, const QStringList& Checkers)
+{
+	int FailCount = 0;
+	for (QStringList::const_iterator I = Files.begin(); I != Files.end(); ++I) 
+	{
+		if (pProgress->IsCanceled()) break;
+
+		QString BoxPath = *I;
+		QString FileName = BoxPath.mid(BoxPath.lastIndexOf("\\") + 1);
+		
+		pProgress->ShowMessage(tr("Checking file %1").arg(FileName));
+
+		foreach(const QString & Value, Checkers) {
+			QString Output;
+			int ret = CSbieUtils::ExecCommandEx(Value + " \"" + BoxPath + "\"", &Output, 15000); // 15 sec timeout
+			if (ret != 0) {
+				FailCount++;
+				QMetaObject::invokeMethod(theGUI, "ShowMessage", Qt::BlockingQueuedConnection, // show this message using the GUI thread
+					Q_ARG(QString, tr("The file %1 failed a security check!\r\n\r\n%2").arg(BoxPath).arg(Output)),
+					Q_ARG(int, QMessageBox::Warning)
+				);
+			}
+		}
+	}
+	if (FailCount == 0) {
+		QMetaObject::invokeMethod(theGUI, "ShowMessage", Qt::BlockingQueuedConnection, // show this message using the GUI thread
+			Q_ARG(QString, tr("All files passed the checks")),
+			Q_ARG(int, QMessageBox::Information)
+		);
+	}
+
+	pProgress->Finish(SB_OK);
+}
+
+SB_PROGRESS CSandMan::RecoverFiles(const QString& BoxName, const QList<QPair<QString, QString>>& FileList, int Action)
+{
+	CSbieProgressPtr pProgress = CSbieProgressPtr(new CSbieProgress());
+	CSandBoxPtr pBox = theAPI->GetBoxByName(BoxName);
+	QStringList Checkers;
+	if (!pBox.isNull()) {
+		foreach(const QString & Value, pBox->GetTextList("OnFileRecovery", true, false, true)) {
+			Checkers.append(pBox->Expand(Value));
+		}
+	}
+	QtConcurrent::run(CSandMan::RecoverFilesAsync, pProgress, BoxName, FileList, Checkers, Action);
+	return SB_PROGRESS(OP_ASYNC, pProgress);
+}
+
+void CSandMan::RecoverFilesAsync(const CSbieProgressPtr& pProgress, const QString& BoxName, const QList<QPair<QString, QString>>& FileList, const QStringList& Checkers, int Action)
 {
 	SB_STATUS Status = SB_OK;
 
 	int OverwriteOnExist = -1;
+	int RecoverCheckFailed = -1;
 
 	QStringList Unrecovered;
 	for (QList<QPair<QString, QString>>::const_iterator I = FileList.begin(); I != FileList.end(); ++I)
 	{
+		if (pProgress->IsCanceled()) break;
+
 		QString BoxPath = I->first;
 		QString RecoveryPath = I->second;
 		QString FileName = BoxPath.mid(BoxPath.lastIndexOf("\\") + 1);
 		QString RecoveryFolder = RecoveryPath.left(RecoveryPath.lastIndexOf("\\") + 1);
+
+		if (!Checkers.isEmpty()) {
+
+			pProgress->ShowMessage(tr("Checking file %1").arg(FileName));
+
+			//bool bNoGui = true;
+			//if (GetKeyState(VK_CONTROL) & 0x8000)
+			//	bNoGui = false;
+
+			int ret = 0;
+			foreach(const QString & Value, Checkers) {
+				QString Output;
+				ret = CSbieUtils::ExecCommandEx(Value + " \"" + BoxPath + "\"", &Output, 15000); // 15 sec timeout
+				if (ret != 0) {
+
+					int Recover = RecoverCheckFailed;
+					if (Recover == -1)
+					{
+						bool forAll = false;
+						int retVal = 0;
+						QMetaObject::invokeMethod(theGUI, "ShowQuestion", Qt::BlockingQueuedConnection, // show this question using the GUI thread
+							Q_RETURN_ARG(int, retVal),
+							Q_ARG(QString, tr("The file %1 failed a security check, do you want to recover it anyway?\r\n\r\n%2").arg(BoxPath).arg(Output)),
+							Q_ARG(QString, tr("Do this for all files!")),
+							Q_ARG(bool*, &forAll),
+							Q_ARG(int, QDialogButtonBox::Yes | QDialogButtonBox::No),
+							Q_ARG(int, QDialogButtonBox::No),
+							Q_ARG(int, QMessageBox::Warning)
+						);
+
+						Recover = retVal == QDialogButtonBox::Yes ? 1 : 0;
+						if (forAll)
+							RecoverCheckFailed = Recover;
+					}
+
+					if (Recover == 1)
+						ret = 0;
+					else
+						break;
+				}
+			}
+			if (ret != 0)
+				continue; // Do not recover this file
+		}
 
 		pProgress->ShowMessage(tr("Recovering file %1 to %2").arg(FileName).arg(RecoveryFolder));
 
@@ -99,7 +211,8 @@ void CSandMan::RecoverFilesAsync(const CSbieProgressPtr& pProgress, const QStrin
 					Q_ARG(QString, tr("Do this for all files!")),
 					Q_ARG(bool*, &forAll),
 					Q_ARG(int, QDialogButtonBox::Yes | QDialogButtonBox::No),
-					Q_ARG(int, QDialogButtonBox::No)
+					Q_ARG(int, QDialogButtonBox::No),
+					Q_ARG(int, QMessageBox::Question)
 				);
 
 				Overwrite = retVal == QDialogButtonBox::Yes ? 1 : 0;
@@ -188,7 +301,7 @@ CRecoveryLogWnd::CRecoveryLogWnd(QWidget *parent)
 	this->setWindowTitle(tr("Sandboxie-Plus - Recovery Log"));
 
 	QGridLayout* pLayout = new QGridLayout();
-	//pLayout->setMargin(3);
+	//pLayout->setContentsMargins(3,3,3,3);
 	
 	m_pRecoveryLog = new CPanelWidgetEx();
 	m_pRecoveryLog->GetTree()->setItemDelegate(new CTreeItemDelegate());

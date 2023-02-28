@@ -1374,7 +1374,11 @@ Crea collegamento sul desktop
 .
 
 3504;txt;01
-&Supporta Sandboxie
+&Sostieni Sandboxie con le donazioni
+.
+
+3505;txt;01
+Come contribuire al progetto
 .
 
 #----------------------------------------------------------------------------
@@ -3266,7 +3270,7 @@ Consenti l'accesso diretto alle note di %2
 .
 
 4342;txt;01
-Attiva correzione di %2 per Windows 11 KB5014019
+Attiva correzione di compatibilità per %2
 .
 
 4356;txt;02

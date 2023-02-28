@@ -14,6 +14,8 @@ public:
 	CFileView(QWidget *parent = Q_NULLPTR);
 	~CFileView();
 
+	virtual void				SaveState();
+
 	void SetBox(const CSandBoxPtr& pBox);
 	const CSandBoxPtr& GetBox() const { return m_pBox; }
 	
@@ -23,15 +25,15 @@ private slots:
 	void				OnFileMenu(const QPoint &);
 	void				OnFileDblClick(const QModelIndex &);
 
-	void				OnAboutToBeCleaned();
+	void				OnAboutToBeModified();
 
 protected:
 	CSandBoxPtr m_pBox;
 
 private:
-	QGridLayout* m_pMainLayout;
-	QTreeView* m_pTreeView;
-	QFileSystemModel* m_pFileModel;
+	QGridLayout*		m_pMainLayout;
+	QTreeView*			m_pTreeView;
+	QFileSystemModel*	m_pFileModel;
 };
 
 

@@ -12,7 +12,7 @@ CBoxMonitor::~CBoxMonitor()
 	Stop();
 }
 
-void CBoxMonitor::Notify(const wstring& strDirectory)
+void CBoxMonitor::Notify(const std::wstring& strDirectory)
 {
 	m_Mutex.lock();
 	m_Boxes[QString::fromStdWString(strDirectory)].Changed = true;
@@ -26,10 +26,17 @@ quint64 CBoxMonitor::CounDirSize(const QString& Directory, SBox* Box)
 		return TotalSize;
 
 	QDir Dir(Directory);
-	foreach(const QFileInfo & Info, Dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot))
+	foreach(const QFileInfo & Info, Dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot))
 	{
 		if (Info.isDir())
 			TotalSize += CounDirSize(Info.filePath(), Box);
+		else if (Info.isShortcut())
+		{
+			QFile File(Info.filePath());
+			if (File.open(QFile::ReadOnly))
+				TotalSize += File.size();
+			File.close();
+		}
 		else
 			TotalSize += QFile(Info.filePath()).size();
 	}
@@ -93,7 +100,7 @@ void CBoxMonitor::run()
 
 void CBoxMonitor::UpdateBox(const QString& Path)
 {
-	// Note: this private functin runs in the main thread
+	// Note: this private function runs in the main thread
 
 	m_Mutex.lock();
 	SBox Box = m_Boxes.value(Path);

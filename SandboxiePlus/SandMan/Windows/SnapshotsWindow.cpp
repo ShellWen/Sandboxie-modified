@@ -34,7 +34,7 @@ CSnapshotsWindow::CSnapshotsWindow(const CSandBoxPtr& pBox, QWidget *parent)
 	ui.treeSnapshots->setItemDelegate(new CTreeItemDelegate());
 	ui.treeSnapshots->setExpandsOnDoubleClick(false);
 
-	m_pSnapshotModel = new CSimpleTreeModel();
+	m_pSnapshotModel = new CSimpleTreeModel(this);
 	m_pSnapshotModel->AddColumn(tr("Snapshot"), "Name");
 
 	/*m_pSortProxy = new CSortFilterProxyModel(this);
@@ -93,8 +93,8 @@ void CSnapshotsWindow::closeEvent(QCloseEvent *e)
 void CSnapshotsWindow::UpdateSnapshots(bool AndSelect)
 {
 	m_SnapshotMap.clear();
-	QList<SBoxSnapshot> SnapshotList = m_pBox->GetSnapshots(&m_CurSnapshot, &m_DefaultSnapshot);
-	foreach(const SBoxSnapshot& Snapshot, SnapshotList)
+	QMap<QString, SBoxSnapshot> Snapshots = m_pBox->GetSnapshots(&m_CurSnapshot, &m_DefaultSnapshot);
+	foreach(const SBoxSnapshot& Snapshot, Snapshots)
 	{
 		QVariantMap BoxSnapshot;
 		BoxSnapshot["ID"] = Snapshot.ID;

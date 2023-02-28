@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 David Xanatos, xanasoft.com
+ * Copyright 2022-2023 David Xanatos, xanasoft.com
  *
  * This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@
 
 // Keep in sync with the FILE_..._FLAG's in file_del.c
 // 
-// path flages, saved to file
+// path flags, saved to file
 #define KEY_DELETED_FLAG       0x0001
 #define KEY_RELOCATION_FLAG    0x0002
 
@@ -58,6 +58,8 @@ static CRITICAL_SECTION *Key_PathRoot_CritSec = NULL;
 BOOLEAN Key_RegPaths_Loaded = FALSE;
 
 static HANDLE Key_BoxRootWatcher = NULL;
+static ULONG64 Key_PathsFileSize = 0;
+static ULONG64 Key_PathsFileDate = 0;
 static volatile ULONGLONG Key_PathsVersion = 0; // count reloads
 
 
@@ -75,7 +77,7 @@ static ULONG Key_IsDeleted_v2(const WCHAR* TruePath);
 static ULONG Key_IsDeletedEx_v2(const WCHAR* TruePath, const WCHAR* ValueName, BOOLEAN IsValue);
 
 //
-// we re use the _internal functions of the file implementation as thay all are generic enough
+// we re use the _internal functions of the file implementation as they all are generic enough
 //
 
 VOID File_ClearPathBranche_internal(LIST* parent);
@@ -86,6 +88,8 @@ ULONG File_GetPathFlags_internal(LIST* Root, const WCHAR* Path, WCHAR** pRelocat
 VOID File_SavePathNode_internal(HANDLE hPathsFile, LIST* parent, WCHAR* Path, ULONG Length, ULONG SetFlags);
 BOOLEAN File_MarkDeleted_internal(LIST* Root, const WCHAR* Path);
 VOID File_SetRelocation_internal(LIST* Root, const WCHAR* OldTruePath, const WCHAR* NewTruePath);
+
+BOOL File_GetAttributes_internal(const WCHAR *name, ULONG64 *size, ULONG64 *date, ULONG *attrs);
 
 HANDLE File_AcquireMutex(const WCHAR* MutexName);
 void File_ReleaseMutex(HANDLE hMutex);
@@ -124,9 +128,11 @@ _FX BOOLEAN Key_SavePathTree()
 
     File_SavePathTree_internal(&Key_PathRoot, KEY_PATH_FILE_NAME);
 
-    LeaveCriticalSection(Key_PathRoot_CritSec);
+    File_GetAttributes_internal(KEY_PATH_FILE_NAME, &Key_PathsFileSize, &Key_PathsFileDate, NULL);
 
     Key_PathsVersion++;
+
+    LeaveCriticalSection(Key_PathRoot_CritSec);
 
     return TRUE;
 }
@@ -167,13 +173,22 @@ _FX VOID Key_RefreshPathTree()
 
     if (WaitForSingleObject(Key_BoxRootWatcher, 0) == WAIT_OBJECT_0) {
 
-        //
-        // somethign changed, reload the path tree
-        //
+        ULONG64 PathsFileSize = 0;
+        ULONG64 PathsFileDate = 0;
+        if (File_GetAttributes_internal(KEY_PATH_FILE_NAME, &PathsFileSize, &PathsFileDate, NULL) 
+            && (Key_PathsFileSize != PathsFileSize || Key_PathsFileDate != PathsFileDate)) {
 
-        Key_LoadPathTree();
+            Key_PathsFileSize = PathsFileSize;
+            Key_PathsFileDate = PathsFileDate;
 
-        FindNextChangeNotification(Key_BoxRootWatcher); // rearm the watcher
+            //
+            // something changed, reload the path tree
+            //
+
+            Key_LoadPathTree();
+
+            FindNextChangeNotification(Key_BoxRootWatcher); // rearm the watcher
+        }
     }
 }
 
@@ -195,6 +210,8 @@ _FX BOOLEAN Key_InitDelete_v2()
 //#ifdef WITH_DEBUG
 //    Key_SavePathTree();
 //#endif
+    
+    File_GetAttributes_internal(KEY_PATH_FILE_NAME, &Key_PathsFileSize, &Key_PathsFileDate, NULL);
 
     WCHAR BoxFilePath[MAX_PATH] = { 0 };
     wcscpy(BoxFilePath, Dll_BoxFilePath);
@@ -224,7 +241,7 @@ _FX NTSTATUS Key_MarkDeletedEx_v2(const WCHAR* TruePath, const WCHAR* ValueName)
     THREAD_DATA *TlsData = Dll_GetTlsData(NULL);
 
     WCHAR* FullPath = Dll_GetTlsNameBuffer(TlsData, TMPL_NAME_BUFFER, 
-        (wcslen(TruePath) + (ValueName ? wcslen(ValueName) : 0) + 16) * sizeof(WCHAR)); // template buffer is not used for reg reputpose it here
+        (wcslen(TruePath) + (ValueName ? wcslen(ValueName) : 0) + 16) * sizeof(WCHAR)); // template buffer is not used for reg repurpose it here
 
     wcscpy(FullPath, TruePath);
     if (ValueName) {
@@ -277,7 +294,7 @@ _FX ULONG Key_IsDeletedEx_v2(const WCHAR* TruePath, const WCHAR* ValueName, BOOL
     THREAD_DATA *TlsData = Dll_GetTlsData(NULL);
 
     WCHAR* FullPath = Dll_GetTlsNameBuffer(TlsData, TMPL_NAME_BUFFER, 
-        (wcslen(TruePath) + (ValueName ? wcslen(ValueName) : 0) + 16) * sizeof(WCHAR)); // template buffer is not used for reg reputpose it here
+        (wcslen(TruePath) + (ValueName ? wcslen(ValueName) : 0) + 16) * sizeof(WCHAR)); // template buffer is not used for reg repurpose it here
 
     wcscpy(FullPath, TruePath);
     if (ValueName) {

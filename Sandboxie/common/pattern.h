@@ -77,7 +77,7 @@ ULONG Pattern_Level(PATTERN *pat);
 USHORT Pattern_Wildcards(PATTERN *pat);
 
 //
-// Pattern_Exact:  returns true if the patter has no wildcard at the end
+// Pattern_Exact:  returns true if the pattern has no wildcard at the end
 //
 
 BOOLEAN Pattern_Exact(PATTERN *pat);
@@ -95,10 +95,13 @@ int Pattern_MatchX(PATTERN *pat, const WCHAR *string, int string_len);
 // Pattern_MatchPathList:  match a specific path
 //
 
+#define MATCH_FLAG_EXACT    0x01
+#define MATCH_FLAG_AUX      0x02
+
 int Pattern_MatchPathList(
-    WCHAR* path_lwr, ULONG path_len, LIST* list, ULONG* plevel, BOOLEAN* pexact, USHORT* pwildc, const WCHAR** patsrc);
+    WCHAR* path_lwr, ULONG path_len, LIST* list, ULONG* plevel, ULONG* pflags, USHORT* pwildc, const WCHAR** patsrc);
 BOOLEAN Pattern_MatchPathListEx(
-    WCHAR* path_lwr, ULONG path_len, LIST* list, ULONG* plevel, int* pmatch_len, BOOLEAN* pexact, USHORT* pwildc, const WCHAR** patsrc);
+    WCHAR* path_lwr, ULONG path_len, LIST* list, ULONG* plevel, int* pmatch_len, ULONG* pflags, USHORT* pwildc, const WCHAR** patsrc);
 
 //---------------------------------------------------------------------------
 

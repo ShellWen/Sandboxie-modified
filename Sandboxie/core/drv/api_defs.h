@@ -157,6 +157,7 @@ enum {
     API_FILTER_TOKEN,
     API_SET_SECURE_PARAM,
     API_GET_SECURE_PARAM,
+    API_MONITOR_GET2,
 
     API_LAST
 };
@@ -176,6 +177,7 @@ enum {
     SVC_UNMOUNT_HIVE,
     SVC_LOG_MESSAGE,
     SVC_CONFIG_UPDATED,
+    SVC_MOUNTED_HIVE,
 
     SVC_LAST
 };
@@ -351,6 +353,11 @@ API_ARGS_FIELD(BOOLEAN,is_message)
 //API_ARGS_FIELD(ULONG, log_aux)
 API_ARGS_CLOSE(API_MONITOR_PUT2_ARGS)
 
+API_ARGS_BEGIN(API_MONITOR_GET2_ARGS)
+API_ARGS_FIELD(WCHAR *, buffer_ptr)
+API_ARGS_FIELD(ULONG *, buffer_len)
+API_ARGS_CLOSE(API_MONITOR_GET2_ARGS)
+
 API_ARGS_BEGIN(API_GET_UNMOUNT_HIVE_ARGS)
 API_ARGS_FIELD(WCHAR *,path)
 API_ARGS_CLOSE(API_GET_UNMOUNT_HIVE_ARGS)
@@ -501,13 +508,13 @@ typedef struct _SVC_PROCESS_MSG {
 } SVC_PROCESS_MSG;
 
 
-typedef struct _SVC_UNMOUNT_MSG {
+typedef struct _SVC_REGHIVE_MSG {
 
     ULONG process_id;
     ULONG session_id;
     WCHAR boxname[34];
 
-} SVC_UNMOUNT_MSG;
+} SVC_REGHIVE_MSG;
 
 
 //---------------------------------------------------------------------------

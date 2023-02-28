@@ -39,6 +39,8 @@ protected:
 	bool m_SecretMode;
 };
 
+void AddIconToLabel(QLabel* pLabel, const QPixmap& Pixmap);
+
 //////////////////////////////////////////////////////////////////////////
 // CSettingsWindow
 
@@ -84,6 +86,10 @@ private slots:
 
 	void OnTab();
 
+	void OnBrowsePath();
+	void OnAddCommand();
+	void OnDelCommand();
+
 	void OnChangeGUI() { m_bRebuildUI = true; }
 	void OnFeaturesChanged() { m_FeaturesChanged = true; }
 
@@ -109,6 +115,7 @@ private slots:
 
 	void CertChanged();
 	void UpdateCert();
+	void UpdateUpdater();
 
 	void GetUpdates();
 	void OnUpdateData(const QVariantMap& Data, const QVariantMap& Params);
@@ -121,7 +128,9 @@ protected:
 
 	bool eventFilter(QObject *watched, QEvent *e);
 
-	void OnTab(int iTabID);
+	void OnTab(QWidget* pTab);
+
+	void	AddRunItem(const QString& Name, const QString& Command);
 
 	void	AddWarnEntry(const QString& Name, int type);
 
@@ -162,18 +171,19 @@ union SCertInfo {
     quint64	State;
     struct {
         quint32
-            valid     : 1, // certificate is active
-            expired   : 1, // certificate is expired but may be active
-            outdated  : 1, // certificate is expired, not anymore valid for the current build
-            business  : 1, // certificate is siutable for business use
-            evaluation: 1, // evaluation certificate
-            reservd_1 : 3,
+            valid     : 1,      // certificate is active
+            expired   : 1,      // certificate is expired but may be active
+            outdated  : 1,      // certificate is expired, not anymore valid for the current build
+            business  : 1,      // certificate is suitable for business use
+            evaluation: 1,      // evaluation certificate
+            grace_period: 1,    // the certificate is expired and or outdated but we keep it valid for 1 extra month to allof wor a seamless renewal
+            reservd_1 : 2,
             reservd_2 : 8,
             reservd_3 : 8,
 			reservd_4 : 8;
 		qint32 
 			expirers_in_sec : 30, 
-			unused_1        : 1, // skim a couple high bits to use as flags flag, 0x3fffffff -> is 34 years count down isenough
+			unused_1        : 1, // skim a couple high bits to use as flags flag, 0x3fffffff -> is 34 years count down is enough
 			about_to_expire : 1; 
     };
 };

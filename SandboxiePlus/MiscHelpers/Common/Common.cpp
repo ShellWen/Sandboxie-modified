@@ -39,7 +39,7 @@ int vswprintf_l(wchar_t * _String, size_t _Count, const wchar_t * _Format, va_li
 time_t GetTime()
 {
 	QDateTime dateTime = QDateTime::currentDateTime();
-	time_t time = dateTime.toTime_t(); // returns time in seconds (since 1970-01-01T00:00:00) in UTC !
+	time_t time = dateTime.toSecsSinceEpoch(); // returns time in seconds (since 1970-01-01T00:00:00) in UTC !
 	return time;
 }
 
@@ -286,27 +286,27 @@ QString FormatUnit(quint64 Size, int Precision)
 }
 
 
-QString FormatTime(quint64 Time, bool ms)
-{
-	int miliseconds = 0;
-	if (ms) {
-		miliseconds = Time % 1000;
-		Time /= 1000;
-	}
-	int seconds = Time % 60;
-	Time /= 60;
-	int minutes = Time % 60;
-	Time /= 60;
-	int hours = Time % 24;
-	int days = Time / 24;
-	if(ms && (minutes == 0) && (hours == 0) && (days == 0))
-		return QString().sprintf("%02d.%04d", seconds, miliseconds);
-	if((hours == 0) && (days == 0))
-		return QString().sprintf("%02d:%02d", minutes, seconds);
-	if (days == 0)
-		return QString().sprintf("%02d:%02d:%02d", hours, minutes, seconds);
-	return QString().sprintf("%dd%02d:%02d:%02d", days, hours, minutes, seconds);
-}
+//QString FormatTime(quint64 Time, bool ms)
+//{
+//	int milliseconds = 0;
+//	if (ms) {
+//		milliseconds = Time % 1000;
+//		Time /= 1000;
+//	}
+//	int seconds = Time % 60;
+//	Time /= 60;
+//	int minutes = Time % 60;
+//	Time /= 60;
+//	int hours = Time % 24;
+//	int days = Time / 24;
+//	if(ms && (minutes == 0) && (hours == 0) && (days == 0))
+//		return QString().sprintf("%02d.%04d", seconds, milliseconds);
+//	if((hours == 0) && (days == 0))
+//		return QString().sprintf("%02d:%02d", minutes, seconds);
+//	if (days == 0)
+//		return QString().sprintf("%02d:%02d:%02d", hours, minutes, seconds);
+//	return QString().sprintf("%dd%02d:%02d:%02d", days, hours, minutes, seconds);
+//}
 
 QString	FormatNumber(quint64 Number)
 {
@@ -328,6 +328,108 @@ bool ReadFromDevice(QIODevice* dev, char* data, int len, int timeout)
 			return false;
 	}
 	return dev->read(data, len) == len;
+}
+
+my_hsv rgb2hsv(my_rgb in)
+{
+    my_hsv      out;
+    double      min, max, delta;
+
+    min = in.r < in.g ? in.r : in.g;
+    min = min  < in.b ? min  : in.b;
+
+    max = in.r > in.g ? in.r : in.g;
+    max = max  > in.b ? max  : in.b;
+
+    out.v = max;                                // v
+    delta = max - min;
+    if (delta < 0.00001)
+    {
+        out.s = 0;
+        out.h = 0; // undefined, maybe nan?
+        return out;
+    }
+    if( max > 0.0 ) { // NOTE: if Max is == 0, this divide would cause a crash
+        out.s = (delta / max);                  // s
+    } else {
+        // if max is 0, then r = g = b = 0              
+        // s = 0, h is undefined
+        out.s = 0.0;
+        out.h = NAN;                            // its now undefined
+        return out;
+    }
+    if( in.r >= max )                           // > is bogus, just keeps compilor happy
+        out.h = ( in.g - in.b ) / delta;        // between yellow & magenta
+    else
+    if( in.g >= max )
+        out.h = 2.0 + ( in.b - in.r ) / delta;  // between cyan & yellow
+    else
+        out.h = 4.0 + ( in.r - in.g ) / delta;  // between magenta & cyan
+
+    out.h *= 60.0;                              // degrees
+
+    if( out.h < 0.0 )
+        out.h += 360.0;
+
+    return out;
+}
+
+my_rgb hsv2rgb(my_hsv in)
+{
+    double      hh, p, q, t, ff;
+    long        i;
+    my_rgb      out;
+
+    if(in.s <= 0.0) {       // < is bogus, just shuts up warnings
+        out.r = in.v;
+        out.g = in.v;
+        out.b = in.v;
+        return out;
+    }
+    hh = in.h;
+    if(hh >= 360.0) hh = 0.0;
+    hh /= 60.0;
+    i = (long)hh;
+    ff = hh - i;
+    p = in.v * (1.0 - in.s);
+    q = in.v * (1.0 - (in.s * ff));
+    t = in.v * (1.0 - (in.s * (1.0 - ff)));
+
+    switch(i) {
+    case 0:
+        out.r = in.v;
+        out.g = t;
+        out.b = p;
+        break;
+    case 1:
+        out.r = q;
+        out.g = in.v;
+        out.b = p;
+        break;
+    case 2:
+        out.r = p;
+        out.g = in.v;
+        out.b = t;
+        break;
+
+    case 3:
+        out.r = p;
+        out.g = q;
+        out.b = in.v;
+        break;
+    case 4:
+        out.r = t;
+        out.g = p;
+        out.b = in.v;
+        break;
+    case 5:
+    default:
+        out.r = in.v;
+        out.g = p;
+        out.b = q;
+        break;
+    }
+    return out;     
 }
 
 uint8_t clamp(float v) //define a function to bound and round the input float value to 0-255
@@ -380,7 +482,7 @@ void GrayScale (QImage& Image)
 		uchar* g = (Image.bits () + 1);
 		uchar* b = (Image.bits () + 2);
 
-		uchar* end = (Image.bits() + Image.byteCount ());
+		uchar* end = (Image.bits() + Image.sizeInBytes());
 		while (r != end)
 		{
 			*r = *g = *b = (((*r + *g) >> 1) + *b) >> 1; // (r + b + g) / 3

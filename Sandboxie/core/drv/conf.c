@@ -51,9 +51,9 @@
 //---------------------------------------------------------------------------
 
 //
-// Note: we want to preserver the order of the settings when enumerating
-//          hence we can not replace the list with a hash map entierly
-//          instead we use booth, here the hash map ise used only for lookups
+// Note: we want to preserve the order of the settings when enumerating
+//          hence we can not replace the list with a hash map entirely
+//          instead we use both, here the hash map is used only for lookups
 //          the keys in the map are only pointers to the name fields in the list entries
 //
 
@@ -204,7 +204,7 @@ _FX NTSTATUS Conf_Read(ULONG session_id)
     ULONG path_len;
     WCHAR *path = NULL;
     BOOLEAN path_home;
-    STREAM *stream;
+    STREAM *stream = NULL;
     POOL *pool;
 
     //
@@ -247,6 +247,7 @@ _FX NTSTATUS Conf_Read(ULONG session_id)
             status == STATUS_OBJECT_PATH_NOT_FOUND)
         {
             Log_Msg_Session(MSG_CONF_NO_FILE, NULL, NULL, session_id);
+            status = STATUS_SUCCESS; // we need to continue and load the Templates.ini with the defaults
         } else {
             wcscpy(linenum_str, L"(none)");
             Log_Status_Ex_Session(
@@ -281,6 +282,8 @@ _FX NTSTATUS Conf_Read(ULONG session_id)
         data.home = path_home;
         data.use_count = 0;
 
+      if (stream) {
+
         status = Stream_Read_BOM(stream, &data.encoding);
 
         linenum = 1;
@@ -288,9 +291,10 @@ _FX NTSTATUS Conf_Read(ULONG session_id)
             status = Conf_Read_Sections(stream, &data, &linenum);
         if (status == STATUS_END_OF_FILE)
             status = STATUS_SUCCESS;
+      }
     }
 
-    Stream_Close(stream);
+    if (stream) Stream_Close(stream);
 
     //
     // read (Home Path)\Templates.ini
@@ -799,7 +803,7 @@ _FX NTSTATUS Conf_Merge_Templates(CONF_DATA *data, ULONG session_id)
 #ifdef USE_CONF_MAP
 
         //
-        // use a keyed itterator to quickly go through all Template=Xxx settings
+        // use a keyed iterator to quickly go through all Template=Xxx settings
         //
 
         map_iter_t iter2 = map_key_iter(&sandbox->settings_map, Conf_Template);
@@ -1047,7 +1051,7 @@ _FX const WCHAR *Conf_Get_Helper(
     if (section) {
 #ifdef USE_CONF_MAP
         //
-        // use a keyed itterator to quickly go through all matching settings
+        // use a keyed iterator to quickly go through all matching settings
         //
 
         map_iter_t iter2 = map_key_iter(&section->settings_map, setting_name);

@@ -56,6 +56,10 @@ LONG SbieApi_Call(ULONG api_code, LONG arg_num, ...);
 SBIEAPI_EXPORT LONG SbieApi_GetVersion(
     WCHAR *version_string);         // WCHAR [16]
 
+SBIEAPI_EXPORT LONG SbieApi_GetVersionEx(
+    WCHAR* version_string,          // WCHAR [16]
+    ULONG* abi_version);
+
 /*SBIEAPI_EXPORT
 LONG SbieApi_GetWork(
     ULONG SessionId,
@@ -212,6 +216,14 @@ SBIEAPI_EXPORT
     ULONG Type,
     const WCHAR *Message);
 
+SBIEAPI_EXPORT
+LONG SbieApi_MonitorPut2Ex(
+    ULONG Type,
+    ULONG NameLen,
+    const WCHAR *Name,
+    BOOLEAN bCheckObjectExists,
+    BOOLEAN bIsMessage);
+
 //SBIEAPI_EXPORT
 //LONG SbieApi_MonitorGet(
 //    ULONG *Type,
@@ -333,6 +345,12 @@ BOOLEAN SbieApi_QueryConfBool(
     const WCHAR *section_name,      // WCHAR [66]
     const WCHAR *setting_name,      // WCHAR [66]
     BOOLEAN def);
+
+SBIEAPI_EXPORT
+ULONG SbieApi_QueryConfNumber(
+    const WCHAR *section_name,      // WCHAR [66]
+    const WCHAR *setting_name,      // WCHAR [66]
+    ULONG def);
 
 SBIEAPI_EXPORT
 LONG SbieApi_EnumBoxes(

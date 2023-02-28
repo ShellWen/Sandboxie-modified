@@ -12,6 +12,8 @@ public:
 	CSbieView(QWidget* parent = 0);
 	virtual ~CSbieView();
 
+	virtual void				SaveState();
+
 	virtual QTreeViewEx*		GetTree() { return m_pSbieTree; }
 
 	virtual QList<CSandBoxPtr>	GetSelectedBoxes();
@@ -20,7 +22,7 @@ public:
 
 	//virtual void				UpdateRunMenu();
 
-	virtual QString				AddNewBox();
+	virtual QString				AddNewBox(bool bAlowTemp = false);
 	virtual QString				AddNewGroup();
 	virtual bool				TestNameAndWarn(const QString& Name);
 	virtual void				SelectBox(const QString& Name);
@@ -33,10 +35,14 @@ public:
 
 	QMap<QString, QStringList>	GetGroups() { return m_Groups; }
 
+signals:
+	void						BoxSelected();
+
 public slots:
 	void						Clear();
 	void						Refresh();
 	void						ReloadUserConfig();
+	void						ClearUserUIConfig(const QMap<QString, CSandBoxPtr> AllBoxes = QMap<QString, CSandBoxPtr>());
 	void						SaveUserConfig();
 
 private slots:
@@ -45,6 +51,7 @@ private slots:
 	void						OnCustomSortByColumn(int column);
 
 	void						OnDoubleClicked(const QModelIndex& index);
+	void						OnClicked(const QModelIndex& index);
 	void						ProcessSelection(const QItemSelection& selected, const QItemSelection& deselected);
 
 	void						OnGroupAction();
@@ -67,6 +74,7 @@ protected:
 	virtual QTreeView*			GetView() { return m_pSbieTree; }
 	virtual QAbstractItemModel* GetModel() { return m_pSortProxy; }
 
+	virtual void				UpdateStartMenu(CSandBoxPlus* pBoxEx);
 	virtual void				UpdateRunMenu(const CSandBoxPtr& pBox);
 
 	QMap<QString, QStringList>	m_Groups;
@@ -95,6 +103,8 @@ private:
 
 	void					ChangeExpand(const QModelIndex& index, bool bExpand);
 
+	QMenu*					GetMenuFolder(const QString& Folder, QMenu* pParent, QMap<QString, QMenu*>& Folders);
+
 	QVBoxLayout*			m_pMainLayout;
 
 	QTreeViewEx*			m_pSbieTree;
@@ -114,6 +124,9 @@ private:
 	QMenu*					m_pMenuRun;
 	QAction*				m_pMenuRunAny;
 	QAction*				m_pMenuRunMenu;
+	QMenu*					m_pMenuRunStart;
+	QMap<QString, QMenu*>	m_MenuFolders;
+	QMap<QString, QMenu*>	m_RunFolders;
 	QAction*				m_pMenuRunBrowser;
 	QAction*				m_pMenuRunMailer;
 	QMenu*					m_pMenuRunTools;
@@ -123,7 +136,9 @@ private:
 	QAction*				m_pMenuAutoRun;
 	QAction*				m_pMenuRunCmd;
 	QAction*				m_pMenuRunCmdAdmin;
+#ifdef _WIN64
 	QAction*				m_pMenuRunCmd32;
+#endif
 	QAction*				m_pMenuMkLink;
 	QMenu*					m_pMenuPresets;
 	QActionGroup*			m_pMenuPresetsAdmin;
@@ -146,6 +161,7 @@ private:
 	QAction*				m_pMenuRemove;
 	QMenu*					m_pMenuTools;
 	QAction*				m_pMenuDuplicate;
+	QAction*				m_pMenuExport;
 	QAction*				m_pMenuMoveUp;
 	//QAction*				m_pMenuMoveBy;
 	QAction*				m_pMenuMoveDown;

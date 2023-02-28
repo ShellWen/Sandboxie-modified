@@ -59,6 +59,24 @@ SB_STATUS CSbieIni::SetBool(const QString& Setting, bool Value)
 	return SetText(Setting, Value ? "y" : "n");
 }
 
+SB_STATUS CSbieIni::SetBoolSafe(const QString& Setting, bool Value)
+{
+	QString StrValue = Value ? "y" : "n";
+	bool bAdd = true;
+	QStringList Values = GetTextList(Setting, false);
+	foreach(const QString & CurValue, Values) {
+		if (CurValue.contains(","))
+			continue;
+		if (CurValue == StrValue)
+			bAdd = false;
+		else
+			DelValue(Setting, CurValue);
+	}
+	if(bAdd)
+		return InsertText(Setting, StrValue);
+	return SB_OK;
+}
+
 QString CSbieIni::GetText(const QString& Setting, const QString& Default, bool bWithGlobal, bool bNoExpand, bool withTemplates) const
 {
 	int flags = (bWithGlobal ? 0 : CONF_GET_NO_GLOBAL);
@@ -92,11 +110,15 @@ __int64 CSbieIni::GetNum64(const QString& Setting, __int64 Default, bool bWithGl
 
 bool CSbieIni::GetBool(const QString& Setting, bool Default, bool bWithGlobal, bool withTemplates) const
 {
-	QString StrValue = GetText(Setting, QString(), bWithGlobal, true, withTemplates);
-	if (StrValue.compare("y", Qt::CaseInsensitive) == 0)
-		return true;
-	if (StrValue.compare("n", Qt::CaseInsensitive) == 0)
-		return false;
+	QStringList Values = GetTextList(Setting, withTemplates, false, bWithGlobal);
+	foreach(const QString &StrValue, Values) {
+		if (StrValue.contains(","))
+			continue;
+		if (StrValue.compare("y", Qt::CaseInsensitive) == 0)
+			return true;
+		if (StrValue.compare("n", Qt::CaseInsensitive) == 0)
+			return false;
+	}
 	return Default;
 }
 
@@ -232,7 +254,7 @@ SB_STATUS CSbieIni::RenameSection( const QString& NewName, bool deleteOld) // No
 		return SB_ERR();
 	bool SameName = (bool)(NewName.compare(m_Name, Qt::CaseInsensitive) == 0);
 
-	// Get all Settigns
+	// Get all Settings
 	QList<QPair<QString, QString>> Settings = GetIniSection(&status);
 	if (status != STATUS_SUCCESS)
 		return SB_ERR(SB_FailedCopyConf, QVariantList() << m_Name << (quint32)status, status);
@@ -246,12 +268,12 @@ SB_STATUS CSbieIni::RenameSection( const QString& NewName, bool deleteOld) // No
 	}
 
 	// if the name is the same we first delete than write, 
-	// else we first write and than delete, fro safety reasons
+	// else we first write and than delete, for safety reasons
 	if (deleteOld && SameName)
 		goto do_delete;
 
 do_write:
-	// Apply all Settigns
+	// Apply all Settings
 	for (QList<QPair<QString, QString>>::iterator I = Settings.begin(); I != Settings.end(); ++I)
 	{
 		SB_STATUS Status = m_pAPI->SbieIniSet(NewName, I->first, I->second, CSbieAPI::eIniInsert, true);

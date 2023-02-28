@@ -144,7 +144,7 @@ QString CBoxedProcess__GetPebString(HANDLE ProcessHandle, PEB_OFFSET Offset)
 		return QString();
 	}
 
-	wstring s;
+	std::wstring s;
 	if (isTargetWow64Process) // OS : 64Bit, Cur : 32 or 64, Tar: 32bit
 	{
 		PVOID peb32;
@@ -217,13 +217,22 @@ QString CBoxedProcess__GetPebString(HANDLE ProcessHandle, PEB_OFFSET Offset)
 
 bool CBoxedProcess::InitProcessInfo()
 {
-	HANDLE ProcessHandle;
-	ProcessHandle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, (DWORD)m_ProcessId);
-	if (ProcessHandle == INVALID_HANDLE_VALUE) // try with less rights
+	HANDLE ProcessHandle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, (DWORD)m_ProcessId);
+	if (ProcessHandle == NULL) // try with less rights
 		ProcessHandle = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, (DWORD)m_ProcessId);
-	if (ProcessHandle == INVALID_HANDLE_VALUE)
+	if (ProcessHandle == NULL) // try with even less rights
+		ProcessHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)m_ProcessId);
+	if (ProcessHandle == NULL)
 		return false;
 
+	InitProcessInfoImpl(ProcessHandle);
+
+	NtClose(ProcessHandle);
+	return true;
+}
+
+void CBoxedProcess::InitProcessInfoImpl(void* ProcessHandle)
+{
 	PROCESS_BASIC_INFORMATION BasicInformation;
 	NTSTATUS status = NtQueryInformationProcess(ProcessHandle, ProcessBasicInformation, &BasicInformation, sizeof(PROCESS_BASIC_INFORMATION), NULL);
 	if (NT_SUCCESS(status)) {
@@ -255,14 +264,10 @@ bool CBoxedProcess::InitProcessInfo()
 #undef ProcessCommandLineInformation
 	}
 
-	if (m_CommandLine.isEmpty()) // fall back to teh win 7 method - requirers PROCESS_VM_READ
+	if (m_CommandLine.isEmpty()) // fall back to the win 7 method - requirers PROCESS_VM_READ
 	{
 		m_CommandLine = CBoxedProcess__GetPebString(ProcessHandle, PhpoCommandLine);
 	}
-
-	NtClose(ProcessHandle);
-
-	return true;
 }
 
 bool CBoxedProcess::InitProcessInfoEx()
@@ -330,7 +335,7 @@ bool CBoxedProcess::IsSuspended() const
 {
 	bool isSuspended = true;
 
-	// todo: do that globaly once per sec for all boxed processes
+	// todo: do that globally once per sec for all boxed processes
 
 	// Note: If the specified process is a 64-bit process and the caller is a 32-bit process, this function fails and the last error code is ERROR_PARTIAL_COPY (299).
 	HANDLE hThreadSnap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);

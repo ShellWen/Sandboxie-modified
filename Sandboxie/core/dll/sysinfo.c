@@ -122,7 +122,7 @@ BOOLEAN SysInfo_CanUseJobs = FALSE;
 
 _FX BOOLEAN SysInfo_Init(void)
 {
-    HMODULE module = NULL;
+    HMODULE module = Dll_Ntdll;
 
     void *NtTraceEvent;
 
@@ -146,9 +146,12 @@ _FX BOOLEAN SysInfo_Init(void)
         SBIEDLL_HOOK(SysInfo_, NtSetInformationJobObject);
     }
 
+    {
+        HMODULE module = Dll_Kernel32;
 
-    SBIEDLL_HOOK(SysInfo_,SetLocaleInfoW);
-    SBIEDLL_HOOK(SysInfo_,SetLocaleInfoA);
+        SBIEDLL_HOOK(SysInfo_, SetLocaleInfoW);
+        SBIEDLL_HOOK(SysInfo_, SetLocaleInfoA);
+    }
 
     //
     // we don't want to hook NtTraceEvent in kernel mode
@@ -223,7 +226,7 @@ _FX void SysInfo_DiscardProcesses(SYSTEM_PROCESS_INFORMATION *buf)
 
 	WCHAR* hiddenProcesses = NULL;
 	WCHAR* hiddenProcessesPtr = NULL;
-	ULONG hiddenProcessesLen = 100 * 110; // we can hide up to 100 processes, sould be enough
+	ULONG hiddenProcessesLen = 100 * 110; // we can hide up to 100 processes, should be enough
 	WCHAR hiddenProcess[110];
 
 	for (ULONG index = 0; ; ++index) {
@@ -545,10 +548,10 @@ _FX NTSTATUS SysInfo_NtSetInformationJobObject(
     void *JobObjectInformtion, ULONG JobObjectInformtionLength)
 {
     //
-    // Since windows 8 we can have nested jobs i.e. we can have all sandboxed processes 
-    // be part of the box isoaltion job and also of for example a chrome sandbox job.
-    // Howeever we booth jobs can not specify UIRestrictions since our own job allready
-    // specified those restrictions, we dont allow a boxed process to spesify its own.
+    // Since Windows 8, we can have nested jobs, i.e. we can have all sandboxed processes 
+    // be part of the box isolation job and, for example, also part of a Chrome sandbox job.
+    // However, for both jobs we can not specify UIRestrictions. Since our own job already
+    // specified those restrictions, we do not allow a boxed process to specify its own.
     //
 
     if (SysInfo_CanUseJobs && JobObjectInformationClass == JobObjectBasicUIRestrictions)

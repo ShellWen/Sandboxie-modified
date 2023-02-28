@@ -39,7 +39,8 @@ public:
 	CRecoveryWindow(const CSandBoxPtr& pBox, bool bImmediate = false, QWidget *parent = Q_NULLPTR);
 	~CRecoveryWindow();
 
-	bool		IsDeleteShapshots() { return m_DeleteShapshots; }
+	bool		IsDeleteDialog() const;
+	bool		IsDeleteSnapshots() { return m_DeleteSnapshots; }
 
 	virtual void accept() {}
 	virtual void reject() { this->close(); }
@@ -51,6 +52,7 @@ public slots:
 	int			exec();
 
 	int			FindFiles();
+	void		SelectFiles();
 	void		AddFile(const QString& FilePath, const QString& BoxPath);
 
 private slots:
@@ -92,7 +94,7 @@ protected:
 	int m_LastTargetIndex;
 	bool m_bTargetsChanged;
 	bool m_bReloadPending;
-	bool m_DeleteShapshots;
+	bool m_DeleteSnapshots;
 	bool m_bImmediate;
 
 private:

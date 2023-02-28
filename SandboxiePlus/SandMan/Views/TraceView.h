@@ -5,8 +5,8 @@
 #include "../Models/SbieModel.h"
 #include "../Models/TraceModel.h"
 #include "../Models/MonitorModel.h"
+#include "../../MiscHelpers/Common/SortFilterProxyModel.h"
 
-class CTraceFilterProxyModel;
 
 class CTraceTree : public CPanelWidget<QTreeViewEx>
 {
@@ -19,13 +19,20 @@ public:
 	CTraceModel*		m_pTraceModel;
 
 public slots:
-	void				SetFilter(const QRegExp& Exp, bool bHighLight = false, int Column = -1) {
-		emit FilterSet(Exp, bHighLight, Column);
-	}
-	void				SelectNext() {}
+	void				SetFilter(const QString& Exp, int iOptions = 0, int Column = -1);
 
 signals:
-	void				FilterSet(const QRegExp& Exp, bool bHighLight = false, int Column = -1);
+	void				FilterChanged();
+
+protected:
+	friend class CTraceView;
+
+	QString				GetFilterExp() const { return m_FilterExp; }
+
+	//QRegularExpression	m_FilterExp;
+	QString				m_FilterExp;
+	bool				m_bHighLight;
+	//int					m_FilterCol;
 };
 
 class CMonitorList : public CPanelWidget<QTreeViewEx>
@@ -38,7 +45,6 @@ public:
 	CSortFilterProxyModel* m_pSortProxy;
 	CMonitorModel*		m_pMonitorModel;
 };
-
 
 class CTraceView : public QWidget
 {
@@ -54,6 +60,7 @@ public slots:
 	void				Clear();
 
 	void				OnSetTree();
+	void				OnObjTree();
 	void				OnSetMode();
 	void				OnSetPidFilter();
 	void				OnSetTidFilter();
@@ -61,7 +68,7 @@ public slots:
 
 private slots:
 	void				UpdateFilters();
-	void				SetFilter(const QRegExp& Exp, bool bHighLight = false, int Col = -1); // -1 = any
+	void				OnFilterChanged();
 
 	void				SaveToFile();
 
@@ -79,16 +86,12 @@ protected:
 	quint64					m_LastID;
 	int						m_LastCount;
 	bool					m_bUpdatePending;
+	QVector<CTraceEntryPtr> m_TraceList;
 	QMap<QString, CMonitorEntryPtr> m_MonitorMap;
 
 protected:
-	friend int CTraceView__Filter(const CTraceEntryPtr& pEntry, void* params);
-
 	bool				m_FullRefresh;
 
-	QRegExp				m_FilterExp;
-	bool				m_bHighLight;
-	//int					m_FilterCol;
 	quint32				m_FilterPid;
 	quint32				m_FilterTid;
 	QList<quint32>		m_FilterTypes;
@@ -103,6 +106,7 @@ protected:
 	QToolBar*			m_pTraceToolBar;
 	QAction*			m_pMonitorMode;
 	QAction*			m_pTraceTree;
+	QAction*			m_pObjectTree;
 	QComboBox*			m_pTracePid;
 	QComboBox*			m_pTraceTid;
 	class QCheckList*	m_pTraceType;

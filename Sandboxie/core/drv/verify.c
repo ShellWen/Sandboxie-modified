@@ -17,6 +17,7 @@
  */
 
 #include "driver.h"
+#include "util.h"
 
 #include <bcrypt.h>
 
@@ -409,15 +410,17 @@ _FX LONGLONG KphGetDateInterval(CSHORT days, CSHORT months, CSHORT years)
 
 #define SOFTWARE_NAME L"Sandboxie-Plus"
 
-union SCertInfo {
+union _SCertInfo {
     ULONGLONG	State;
     struct {
         ULONG
-            valid     : 1, // certificate is active
-            expired   : 1, // certificate is expired but may be active
-            outdated  : 1, // certificate is expired, not anymore valid for the current build
-            business  : 1, // certificate is siutable for business use
-            reservd_1 : 4,
+            valid     : 1,      // certificate is active
+            expired   : 1,      // certificate is expired but may be active
+            outdated  : 1,      // certificate is expired, not anymore valid for the current build
+            business  : 1,      // certificate is suitable for business use
+            evaluation: 1,      // evaluation certificate
+            grace_period: 1,    // the certificate is expired and or outdated but we keep it valid for 1 extra month to allof wor a seamless renewal
+            reservd_1 : 2,
             reservd_2 : 8,
             reservd_3 : 8,
             reservd_4 : 8;
@@ -450,6 +453,8 @@ _FX NTSTATUS KphValidateCertificate(void)
     WCHAR* level = NULL;
     //WCHAR* key = NULL;
     LARGE_INTEGER cert_date = { 0 };
+
+    Verify_CertInfo.State = 0; // clear
 
     if(!NT_SUCCESS(status = MyInitHash(&hashObj)))
         goto CleanupExit;
@@ -609,7 +614,6 @@ _FX NTSTATUS KphValidateCertificate(void)
 
     status = KphVerifySignature(hash, hashSize, signature, signatureSize);
 
-    Verify_CertInfo.State = 0; // clear
     if (NT_SUCCESS(status)) {
 
         Verify_CertInfo.valid = 1;
@@ -649,24 +653,37 @@ _FX NTSTATUS KphValidateCertificate(void)
 #define TEST_CERT_DATE(days, months, years) \
             if ((cert_date.QuadPart + KphGetDateInterval(days, months, years)) < LocalTime.QuadPart){ \
                 Verify_CertInfo.expired = 1; \
-            } else \
-                Verify_CertInfo.expirers_in_sec = (ULONG)(((cert_date.QuadPart + KphGetDateInterval(0, 0, 1)) - LocalTime.QuadPart) / 10000000ll); // 100ns steps -> 1sec
+            } \
+            Verify_CertInfo.expirers_in_sec = (ULONG)(((cert_date.QuadPart + KphGetDateInterval(days, months, years)) - LocalTime.QuadPart) / 10000000ll); // 100ns steps -> 1sec
+
+        // certs with a validity >= 3 months get 1 extra month of functionality
+#define TEST_GRACE_PERIODE(days, months, years) \
+                if (months >= 3 || years > 0){ \
+                    if ((cert_date.QuadPart + KphGetDateInterval(days, months + 1, years)) >= LocalTime.QuadPart) \
+                        Verify_CertInfo.grace_period = 1; \
+                } \
 
         // Check if the certificate is valid for the current build, failing this locks features out
 #define TEST_VALIDITY(days, months, years) \
             TEST_CERT_DATE(days, months, years) \
             if ((cert_date.QuadPart + KphGetDateInterval(days, months, years)) < BuildDate.QuadPart){ \
                 Verify_CertInfo.outdated = 1; \
-                Verify_CertInfo.valid = 0; \
-                status = STATUS_ACCOUNT_EXPIRED; \
+                TEST_GRACE_PERIODE(days, months, years) \
+                if(!Verify_CertInfo.grace_period){ \
+                    Verify_CertInfo.valid = 0; \
+                    status = STATUS_ACCOUNT_EXPIRED; \
+                } \
             }
 
         // Check if the certificate is expired, failing this locks features out
 #define TEST_EXPIRATION(days, months, years) \
             TEST_CERT_DATE(days, months, years) \
             if(Verify_CertInfo.expired == 1) { \
-                Verify_CertInfo.valid = 0; \
-                status = STATUS_ACCOUNT_EXPIRED; \
+                TEST_GRACE_PERIODE(days, months, years) \
+                if(!Verify_CertInfo.grace_period){ \
+                    Verify_CertInfo.valid = 0; \
+                    status = STATUS_ACCOUNT_EXPIRED; \
+                } \
             }
 
 
@@ -683,6 +700,7 @@ _FX NTSTATUS KphValidateCertificate(void)
             }
         }
         else if (type && _wcsicmp(type, L"EVALUATION") == 0) {
+            Verify_CertInfo.evaluation = 1;
             // evaluation
             if (level) { // in days
                 TEST_EXPIRATION((CSHORT)_wtoi(level), 0, 0);
@@ -697,7 +715,7 @@ _FX NTSTATUS KphValidateCertificate(void)
                 // 
             } 
             else if (level && _wcsicmp(level, L"LARGE") == 0 && cert_date.QuadPart < KphGetDate(1,04,2022)) { // valid for all builds released with 2 years
-                TEST_CERT_DATE(0, 0, 2); // no real expiration just ui reminder
+                TEST_CERT_DATE(0, 0, 2); // no real expiration just ui reminder - old certs
             }
             else if (level && _wcsicmp(level, L"LARGE") == 0) { // valid for all builds released with 2 years
                 TEST_VALIDITY(0, 0, 2);

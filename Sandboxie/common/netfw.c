@@ -49,7 +49,11 @@ static int NetFw_IpCmp(const void * l, const void * r)
 NETFW_RULE* NetFw_AllocRule(POOL* pool, int MatchLevel)
 {
 #ifdef KERNEL_MODE
+#if (NTDDI_VERSION >= NTDDI_WIN10_VB)
+	NETFW_RULE* rule = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NETFW_RULE), tzuk);
+#else
 	NETFW_RULE* rule = ExAllocatePoolWithTag(NonPagedPool, sizeof(NETFW_RULE), tzuk);
+#endif
 #else
     NETFW_RULE* rule = Pool_Alloc(pool, sizeof(NETFW_RULE));
 #endif
@@ -95,7 +99,11 @@ typedef struct _NETFW_PORTS
 void NetFw_RuleAddPortRange(rbtree_t* tree, USHORT PortBegin, USHORT PortEnd, POOL* pool)
 {
 #ifdef KERNEL_MODE
+#if (NTDDI_VERSION >= NTDDI_WIN10_VB)
+	NETFW_PORTS* node = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NETFW_PORTS), tzuk);
+#else
 	NETFW_PORTS* node = ExAllocatePoolWithTag(NonPagedPool, sizeof(NETFW_PORTS), tzuk);
+#endif
 #else
 	NETFW_PORTS* node = Pool_Alloc(pool, sizeof(NETFW_PORTS));
 #endif
@@ -183,7 +191,11 @@ typedef struct _NETFW_IPS
 void NetFw_RuleAddIpRange(rbtree_t* tree, IP_ADDRESS* IpBegin, IP_ADDRESS* IpEnd, POOL* pool)
 {
 #ifdef KERNEL_MODE
+#if (NTDDI_VERSION >= NTDDI_WIN10_VB)
+	NETFW_IPS* node = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NETFW_IPS), tzuk);
+#else
 	NETFW_IPS* node = ExAllocatePoolWithTag(NonPagedPool, sizeof(NETFW_IPS), tzuk);
+#endif
 #else
 	NETFW_IPS* node = Pool_Alloc(pool, sizeof(NETFW_IPS));
 #endif
@@ -293,10 +305,10 @@ void NetFw_AddRule(LIST* list, NETFW_RULE* new_rule)
 			goto next; // must be same level and same action
 
 		if ((rule->port_map.count != 0) != (new_rule->port_map.count != 0))
-			goto next; // booth must, or must not, have Ports
+			goto next; // both must, or must not, have Ports
 		
 		if ((rule->ip_map.count != 0) != (new_rule->ip_map.count != 0))
-			goto next; // booth must, or must not, have IPs
+			goto next; // both must, or must not, have IPs
 
 		if (rule->protocol != new_rule->protocol)
 			goto next; // must be same protocol
@@ -310,7 +322,7 @@ void NetFw_AddRule(LIST* list, NETFW_RULE* new_rule)
 			
 			BOOLEAN same_ports = NetFw_MatchPortMaps(&rule->port_map, &new_rule->port_map);
 			BOOLEAN same_ips = NetFw_MatchIPMaps(&rule->ip_map, &new_rule->ip_map);
-			if (!same_ports && !same_ips) { // if neider Ports nor IP's are same 
+			if (!same_ports && !same_ips) { // if neither Ports nor IPs are same 
 				goto next; // we don't merge
 			}
 			else if (!same_ports) {
@@ -323,7 +335,7 @@ void NetFw_AddRule(LIST* list, NETFW_RULE* new_rule)
 			}
 			
 		}
-		// if we are here it means that booth rules heve eider only ports or only IP's set
+		// if we are here, it means that both rules heve either only ports or only IP's set
 		else if (rule->port_map.count != 0) {
 			if (!NetFw_MergePortMaps(&rule->port_map, &new_rule->port_map, rule->pool))
 				goto next; // merge failed
@@ -334,7 +346,7 @@ void NetFw_AddRule(LIST* list, NETFW_RULE* new_rule)
 		}
 
 		//
-		// if we are here we eider merged the rules or the rules are identical
+		// if we are here, we either merged the rules or the rules are identical
 		//
 
 		NetFw_FreeRule(new_rule);
@@ -438,16 +450,17 @@ const WCHAR* wcsnchr(const WCHAR* str, size_t max, WCHAR ch)
 
 int _inet_pton(int af, const wchar_t* src, void* dst);
 
-int _inet_xton(const WCHAR* src, ULONG max, IP_ADDRESS *dst)
+int _inet_xton(const WCHAR* src, ULONG src_len, IP_ADDRESS *dst)
 {
-	WCHAR tmp[46]; // INET6_ADDRSTRLEN 
-	wmemcpy(tmp, src, max);
+	WCHAR tmp[46 + 1]; // INET6_ADDRSTRLEN 
+	if (src_len > ARRAYSIZE(tmp) - 1) src_len = ARRAYSIZE(tmp) - 1;
+	wmemcpy(tmp, src, src_len);
+	tmp[src_len] = L'\0';
 	
-    //dst->Type = AF_INET;
-    //if (wcschr(src, L':') != NULL)
-    //    dst->Type = AF_INET6;
+	USHORT af = wcschr(tmp, L':') != NULL ? AF_INET6 : AF_INET;
+	//dst->Type = af
+    int ret = _inet_pton(af, tmp, dst->Data);
 
-    int ret = _inet_pton(wcschr(src, L':') != NULL ? AF_INET6 : AF_INET, tmp, dst->Data);
     return ret;
 }
 

@@ -1,6 +1,6 @@
 /*
  * Copyright 2004-2020 Sandboxie Holdings, LLC 
- * Copyright 2020-2022 David Xanatos, xanasoft.com
+ * Copyright 2020-2023 David Xanatos, xanasoft.com
  *
  * This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -44,7 +44,7 @@ typedef struct _FILE_MERGE_CACHE_FILE {
 typedef struct _FILE_MERGE_FILE {
 
     HANDLE handle;
-    FILE_SNAPSHOT* shapshot;
+    FILE_SNAPSHOT* snapshot;
     FILE_ID_BOTH_DIR_INFORMATION *info;
     ULONG info_len;
     WCHAR *name;
@@ -774,10 +774,10 @@ _FX NTSTATUS File_OpenForMerge(
 					merge->files[merge->files_count].handle = NULL;
 
 					TruePathDeleted = TRUE;
-					break; // dont look any further
+					break; // don't look any further
 				}
 
-                merge->files[merge->files_count].shapshot = Cur_Snapshot;
+                merge->files[merge->files_count].snapshot = Cur_Snapshot;
 
                 //
 				// copy file passed all checks;  indicate it is ready for use
@@ -793,12 +793,12 @@ _FX NTSTATUS File_OpenForMerge(
 
             //
             // check if we have a relocation and update CopyPath for the next snapshot accordingly
-            // since we dont need opypath anyware anymore we can alter it
+            // since we don't need opypath anyware anymore we can alter it
             //
 
             if (File_Delete_v2) {
 
-                WCHAR* Relocation;
+                WCHAR* Relocation = NULL;
 			    ULONG Flags = File_GetPathFlags_internal(&Cur_Snapshot->PathRoot, TempPath, &Relocation, TRUE);
                 if (FILE_PATH_DELETED(Flags))
                     break;
@@ -837,7 +837,7 @@ _FX NTSTATUS File_OpenForMerge(
 	// and can let the system work directly on the true file
 	//
 
-    if ((TruePathFlags & FILE_CHILDREN_DELETED_FLAG) == 0) // we ned to do full merge if children ar marked deleted
+    if ((TruePathFlags & FILE_CHILDREN_DELETED_FLAG) == 0) // we need to do full merge if children ar marked deleted
     if (merge->files_count == 0) {
 
 		status = STATUS_BAD_INITIAL_PC;
@@ -915,7 +915,7 @@ _FX NTSTATUS File_OpenForMerge(
         //
         // if rule specificity is enabled we may not have access to this true path
         // but still have access to some sub paths, in this case instead of listing the
-        // true directory we parse the rule list and construst a cached dummy directory
+        // true directory we parse the rule list and construct a cached dummy directory
         //
 
         if (use_rule_specificity && File_MergeDummy(TruePath, merge->true_ptr, &merge->file_mask) == STATUS_SUCCESS) {
@@ -1347,7 +1347,7 @@ _FX NTSTATUS File_MergeCacheWin2000(
 _FX NTSTATUS File_MergeDummy(
     WCHAR *TruePath, FILE_MERGE_FILE *qfile, UNICODE_STRING *FileMask)
 {
-    NTSTATUS status = STATUS_SUCCESS;
+    NTSTATUS status;
     FILE_ID_BOTH_DIR_INFORMATION *info_area;
     FILE_ID_BOTH_DIR_INFORMATION *info_ptr;
     LIST *cache_list;
@@ -1384,7 +1384,7 @@ _FX NTSTATUS File_MergeDummy(
     PATTERN* mask = NULL;
     if (FileMask->Buffer) 
         mask = Pattern_Create(qfile->cache_pool, FileMask->Buffer, TRUE, 0);
-    WCHAR test_buf[MAX_PATH];
+    WCHAR* test_buf = Pool_Alloc(qfile->cache_pool, 0x1000);
 
     LIST* lists[4];
     SbieDll_GetReadablePaths(L'f', lists);
@@ -1405,38 +1405,77 @@ _FX NTSTATUS File_MergeDummy(
             if (_wcsnicmp(TruePath, patstr, TruePathLen) == 0 && patstr[TruePathLen] == L'\\') {
 
                 const WCHAR* ptr = &patstr[TruePathLen + 1];
-                const WCHAR* end = wcschr(ptr, L'\\');
+                WCHAR* end = wcschr(ptr, L'\\');
                 if(end == NULL) end = wcschr(ptr, L'*');
                 if(end == NULL) end = wcschr(ptr, L'\0');
-                ULONG len = (ULONG)(end - ptr);
+                ULONG name_len = (ULONG)(end - ptr);
 
                 if (mask) {
                     
-                    memcpy(test_buf, ptr, (len + 1) * sizeof(WCHAR));
+                    memcpy(test_buf, ptr, (name_len + 1) * sizeof(WCHAR));
                     _wcslwr(test_buf);
 
-                    if (!Pattern_Match(mask, test_buf, len))
+                    if (!Pattern_Match(mask, test_buf, name_len))
                         goto next;
                 }
 
-                info_ptr->FileNameLength = len * sizeof(WCHAR);
-                memcpy(info_ptr->FileName, ptr, info_ptr->FileNameLength);
-                info_ptr->FileName[info_ptr->FileNameLength] = L'\0';
+                //
+                // check if the true path exists
+                //
 
-                info_ptr->FileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+                WCHAR* FakePath = Dll_AllocTemp(TruePathLen * sizeof(WCHAR) + 1 + name_len * sizeof(WCHAR) + 10);
 
-                PrevEntry = &info_ptr->NextEntryOffset;
-                info_ptr->NextEntryOffset = sizeof(FILE_ID_BOTH_DIR_INFORMATION) + info_ptr->FileNameLength + sizeof(WCHAR) + 16; // +16 some buffer space
-                info_ptr = (FILE_ID_BOTH_DIR_INFORMATION*)
-                    ((UCHAR*)info_ptr + info_ptr->NextEntryOffset);
-                // todo: fix-me possible info_area buffer overflow!!!!
-                
+                wmemcpy(FakePath, TruePath, TruePathLen * sizeof(WCHAR));
+                wcscat(FakePath, L"\\");
+                end = wcschr(FakePath, L'\0');
+                wmemcpy(end, ptr, name_len * sizeof(WCHAR));
+                end[name_len] = L'\0';
+
+                FILE_NETWORK_OPEN_INFORMATION info;
+                status = File_QueryFullAttributesDirectoryFile(FakePath, &info);
+
+                Dll_Free(FakePath);
+
+                //
+                // add directory entry
+                //
+
+                if (NT_SUCCESS(status)) {
+
+                    info_ptr->FileNameLength = name_len * sizeof(WCHAR);
+                    memcpy(info_ptr->FileName, ptr, info_ptr->FileNameLength);
+                    info_ptr->FileName[info_ptr->FileNameLength] = L'\0';
+
+                    info_ptr->LastAccessTime = info.LastAccessTime;
+                    info_ptr->LastWriteTime = info.LastWriteTime;
+                    info_ptr->ChangeTime = info.ChangeTime;
+                    info_ptr->AllocationSize = info.AllocationSize;
+                    info_ptr->EndOfFile = info.EndOfFile;
+                    info_ptr->FileAttributes = info.FileAttributes;
+
+                    PrevEntry = &info_ptr->NextEntryOffset;
+
+                    info_ptr->NextEntryOffset = sizeof(FILE_ID_BOTH_DIR_INFORMATION) + info_ptr->FileNameLength + sizeof(WCHAR) + 16; // +16 some buffer space
+
+                    ULONG tmp = (info_ptr->NextEntryOffset & 0x07);
+                    if (tmp != 0) // fix alignment when needed
+                        info_ptr->NextEntryOffset += 0x8 - tmp;
+
+                    info_ptr = (FILE_ID_BOTH_DIR_INFORMATION*)
+                        ((UCHAR*)info_ptr + info_ptr->NextEntryOffset);
+
+                    // todo: fix-me possible info_area buffer overflow!!!!
+                }
             }
 
         next:
             pat = List_Next(pat);
         }
     }
+
+    Pool_Free(test_buf, 0x1000);
+
+    status = STATUS_SUCCESS;
 
     SbieDll_ReleaseFilePathLock();
 
@@ -1652,7 +1691,7 @@ _FX NTSTATUS File_GetMergedInformation(
 
 				int cmp = RtlCompareUnicodeString(&best->name_uni, &cur->name_uni, TRUE); // CaseInSensitive
 
-				if (cmp == 0) // equal - same file in booth, use newer (best)
+				if (cmp == 0) // equal - same file in both, use newer (best)
 					cur->have_entry = FALSE;
 				else if (cmp > 0)
 					best = cur;
@@ -1701,10 +1740,10 @@ _FX NTSTATUS File_GetMergedInformation(
                 *ptr = L'\0';
 
                 //
-                // chekc if the file is listed as deleted
+                // check if the file is listed as deleted
                 //
 
-                if (File_IsDeletedEx(TruePath2, CopyPath2, best->shapshot))
+                if (File_IsDeletedEx(TruePath2, CopyPath2, best->snapshot))
                     continue;
 
             } //else // is in copy path - nothing to do
@@ -1765,6 +1804,15 @@ _FX NTSTATUS File_GetMergedInformation(
 
         name_ptr = File_CopyFixedInformation(
             ptr_info, next_entry, FileInformationClass);
+
+        // This structure must be aligned on a LONGLONG (8-byte) 
+        // boundary. If a buffer contains two or more of these 
+        // structures, the NextEntryOffset value in each entry, 
+        // except the last, falls on an 8-byte boundary.
+        
+        ULONG tmp = (*(ULONG*)next_entry & 0x07);
+        if (tmp != 0) // fix alignment when needed
+            *(ULONG*)next_entry += 0x8 - tmp;
 
         // copy as much of the filename as there is room available
         // in the caller's buffer.  note that for the second and
@@ -2257,7 +2305,7 @@ _FX NTSTATUS File_NtCloseImpl(HANDLE FileHandle)
     }
 
     //
-    // preapre delete disposition if set
+    // prepare delete disposition if set
     //
 
     if (DeleteOnClose) {
@@ -3210,7 +3258,7 @@ _FX NTSTATUS File_SetReparsePoint(
         //TargetPath = Dll_Alloc((wcslen(CopyPath) + 4) * sizeof(WCHAR));
         //wcscpy(TargetPath, CopyPath);
 
-        WCHAR* OldPrintNameBuffer = PrintNameBuffer; // we dont need to change the display name
+        WCHAR* OldPrintNameBuffer = PrintNameBuffer; // we don't need to change the display name
 
         SubstituteNameLength = wcslen(CopyPath) * sizeof(WCHAR);
 
@@ -3250,7 +3298,7 @@ _FX NTSTATUS File_SetReparsePoint(
     }
 
     //
-    // since curt's code in the driver handles reparsing and the driver is no logner blocking this operation
+    // since Curt's code in the driver handles reparsing and the driver is no longer blocking this operation,
     // we can do it directly without the need to ask our service
     //
 
@@ -3347,20 +3395,39 @@ _FX NTSTATUS File_MyQueryDirectoryFile(
 
 
 //---------------------------------------------------------------------------
-// Key_CreateBaseFolders
+// File_CreateBaseFolders
 //---------------------------------------------------------------------------
 
+//#include <Knownfolders.h>
 
-//_FX void Key_CreateBaseFolders()
-//{
-//    //
-//    // in privacy mode we need to pre create some folders or else programs may fail
-//    //
-//
-//    File_CreateBoxedPath(File_SysVolume);
-//
-//    if (SbieApi_QueryConfBool(NULL, L"SeparateUserFolders", TRUE)) {
-//        File_CreateBoxedPath(File_AllUsers);
-//        File_CreateBoxedPath(File_CurrentUser);
-//    }
-//}
+_FX void File_CreateBaseFolders()
+{
+    //
+    // in privacy mode we need to pre create some folders or else programs may fail
+    //
+
+    //File_CreateBoxedPath(File_SysVolume);
+    // 
+    //if (SbieApi_QueryConfBool(NULL, L"SeparateUserFolders", TRUE)) {
+    //    File_CreateBoxedPath(File_AllUsers);
+    //    File_CreateBoxedPath(File_CurrentUser);
+    //}
+
+    WCHAR* Folders[] = { L"SystemRoot", L"TEMP", L"USERPROFILE", //L"windir",
+                        L"PUBLIC", L"ProgramData", L"LOCALAPPDATA", L"ALLUSERSPROFILE", L"APPDATA",
+                        L"ProgramFiles", L"ProgramFiles(x86)", L"ProgramW6432",
+                        //L"CommonProgramFiles", L"CommonProgramFiles(x86)", L"CommonProgramW6432", 
+                        NULL };
+    WCHAR path[MAX_PATH];
+    for (WCHAR** Folder = Folders; *Folder; Folder++) {
+        path[0] = 0;
+        GetEnvironmentVariable(*Folder, path, sizeof(path));
+        if (path[0]) {
+            WCHAR* pathNT = File_TranslateDosToNtPath(path);
+            if (pathNT) {
+                File_CreateBoxedPath(pathNT);
+                Dll_Free(pathNT);
+            }
+        }
+    }
+}

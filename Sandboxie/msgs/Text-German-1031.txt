@@ -162,6 +162,10 @@ SBIE1301 Der Prozess '%2' wurde außerhalb der Sandbox gestartet
 # SBIE1302 Sandbox '%2' wurde nicht definiert oder aktiviert
 # .
 
+1305;pop;inf;02
+SBIE1305 Blockiert, dass sandgeboxtes Abbild geladen wurde - %2
+.
+
 1306;pop;inf;01
 SBIE1306 Sandboxie-Treiber (SbieDrv) kann jetzt nicht entladen werden
 .
@@ -314,6 +318,18 @@ SBIE2111 Prozess ist nicht zugänglich: %3, Aufruf %2
 SBIE2112 Objekt ist nicht zugänglich: %3, Aufruf %2
 .
 
+2113;pop;inf;01
+SBIE2113 Die Datei ist zu groß, um sie in die Sandbox zu kopieren, erzeuge leere Datei - %2
+.
+
+2114;pop;inf;01
+SBIE2114 Die Datei ist zu groß, um sie in die Sandbox zu kopieren, verweigere Zugriff - %2
+.
+
+2115;pop;inf;01
+SBIE2115 Die Datei ist zu groß, um sie in die Sandbox zu kopieren, öffne Datei nur schreibgeschützt - %2
+.
+
 2191;pop;inf;01
 SBIE2191 %2 sollte nicht aktualisiert werden, wenn es mit Sandboxie ausgeführt wird.
 .
@@ -332,6 +348,10 @@ SBIE2194 MSI-Installer benötigt die Aktivierung der %2 option in der ini-Datei,
 
 2195;pop;inf;01
 SBIE2195 Um Explorer.exe sandgeboxt auszuführen, darf der Zugriff auf die COM-Infrastruktur nicht geöffnet sein.
+.
+
+2196;pop;inf;01
+SBIE2196 Um den MSI Installer sandgeboxt auszuführen, darf der Zugriff auf die COM-Infrastruktur nicht geöffnet sein.
 .
 
 2198;pop;inf;01
@@ -446,6 +466,14 @@ SBIE2224 Sandgeboxtes Programm ist abgestürzt: %2
 
 2225;pop;wrn;01
 SBIE2225 Es wurde versucht auf eine EFS-Datei zuzugreifen: %2
+.
+
+2226;pop;wrn;01
+SBIE2226 Prozess konnte wegen fehlenden erhöhten Rechten nicht starten; zur Behebung fügen Sie "ApplyElevateCreateProcessFix=y" zu der ini-Sektion für diese Box hinzu %2
+.
+
+2227;pop;wrn;01
+SBIE2227 '%2' befindet sich auf einem Datenträger, welcher nicht das 8.3 Namensschema unterstützt. Dies kann zu Problemen mit älteren Anwendungen und Installationsprogrammen führen.
 .
 
 #----------------------------------------------------------------------------
@@ -576,6 +604,10 @@ SBIE2336 Fehler im GUI-Server:  %2
 
 2337;pop;err;01
 SBIE2337 Konnte Programm nicht starten:  %2
+.
+
+2338;pop;err;01
+SBIE2338 Nicht unterstützte Architektur in Prozess %2 vorgefunden
 .
 
 #----------------------------------------------------------------------------
@@ -1050,6 +1082,18 @@ Software-Kompatibilität
 
 3504;txt;01
 &Unterstütze Sandboxie
+.
+
+3505;txt;01
+Zu Sandboxie beitragen
+.
+
+3506;txt;01
+Unterstützerzertifikat holen
+.
+
+3507;txt;01
+Unterstützerzertifikat verwenden
 .
 
 3446;txt;01
@@ -2792,7 +2836,7 @@ Erlaube direkten Zugriff zu %2 Notizen
 .
 
 4342;txt;01
-Aktiviere %2 Fix für Windows 11 KB5014019
+Aktiviere %2 Fix für Windows
 .
 
 
@@ -3312,6 +3356,30 @@ Alle Schritte abgeschlossen!
 Vielen Dank, dass Sie sich für diese Anleitung Zeit nahmen. Für weitere Anleitungen und Tipps besuchen Sie bitte die Sandboxie Webseite.
 
 Die Standardeinstellungen von Sandboxie bieten vollständigen Schutz. Die Sandboxeinstellungen finden Sie im Menü Sandbox des Sandboxie Control Fensters.
+.
+
+7988;txt;01
+Ihr Unterstützerzertifikat ist gültig, Vielen Dank :-)
+.
+
+7989;txt;01
+Das Unterstützerzertifikat ist abgelaufen :'(
+.
+
+7990;txt;01
+Bitte kopieren Sie das vollständige Unterstützerzertifikat in die Zwischenablage und drücken Sie OK.
+.
+
+7991;txt;01
+Konnte das Zertifikat nicht in einer Datei speichern.
+.
+
+7992;txt;01
+Das Zertifikat ist nicht gültig.
+.
+
+7993;txt;01
+Das Zertifikat ist gültig und wurde erfolgreich übernommen.
 .
 
 #----------------------------------------------------------------------------

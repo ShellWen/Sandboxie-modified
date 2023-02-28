@@ -64,6 +64,10 @@ static BOOL Proc_SetProcessMitigationPolicy(
     _In_reads_bytes_(dwLength) PVOID lpBuffer,
     _In_ SIZE_T dwLength);
 
+static BOOL Proc_CreateAppContainerToken(
+    HANDLE TokenHandle,
+    PSECURITY_CAPABILITIES SecurityCapabilities,
+    PHANDLE OutToken);
 
 static BOOL Proc_AlternateCreateProcess(
     const WCHAR *lpApplicationName, WCHAR *lpCommandLine,
@@ -85,6 +89,15 @@ static _FX void Proc_FixBatchCommandLine(
     THREAD_DATA *TlsData, const WCHAR *CommandLine, const WCHAR *ImagePath);
 
 static void Proc_StoreImagePath(THREAD_DATA *TlsData, HANDLE FileHandle);
+
+static NTSTATUS Proc_LdrQueryImageFileExecutionOptionsEx(
+    PUNICODE_STRING SubKey,
+    PCWSTR ValueName,
+    ULONG Type,
+    PVOID Buffer,
+    ULONG BufferSize,
+    PULONG ReturnedLength,
+    BOOLEAN Wow64);
 
 static NTSTATUS Proc_RtlCreateProcessParametersEx(
     void *ProcessParameters,
@@ -133,9 +146,11 @@ static BOOLEAN Proc_IsSoftwareUpdateW(const WCHAR *path);
 
 //static BOOLEAN Proc_IsProcessRunning(const WCHAR *ImageToFind);
 
+#ifndef _WIN64
 static BOOLEAN Proc_IsSplWow64(
     const WCHAR *lpApplicationName, const WCHAR *lpCommandLine,
     LPPROCESS_INFORMATION lpProcessInformation);
+#endif
 
 static HRESULT Proc_RunSetupCommandW(
     HWND hWnd,
@@ -195,6 +210,15 @@ typedef BOOL (*P_CreateProcessWithTokenW)(
     void *lpCurrentDirectory,
     void *lpStartupInfo,
     LPPROCESS_INFORMATION lpProcessInformation);
+
+typedef NTSTATUS (*P_LdrQueryImageFileExecutionOptionsEx)(
+    PUNICODE_STRING SubKey,
+    PCWSTR ValueName,
+    ULONG Type,
+    PVOID Buffer,
+    ULONG BufferSize,
+    PULONG ReturnedLength,
+    BOOLEAN Wow64);
 
 typedef NTSTATUS (*P_RtlCreateProcessParametersEx)(
     void *ProcessParameters,
@@ -272,12 +296,21 @@ typedef BOOL (*P_SetProcessMitigationPolicy)(
     _In_reads_bytes_(dwLength) PVOID lpBuffer,
     _In_ SIZE_T dwLength);
 
+typedef BOOL(*P_CreateAppContainerToken)(
+    HANDLE TokenHandle,
+    PSECURITY_CAPABILITIES SecurityCapabilities,
+    PHANDLE OutToken);
+
+
 //---------------------------------------------------------------------------
 
 
 static P_CreateProcessInternal      __sys_CreateProcessInternalW    = NULL;
 
 static P_CreateProcessWithTokenW    __sys_CreateProcessWithTokenW   = NULL;
+
+static P_LdrQueryImageFileExecutionOptionsEx
+                                    __sys_LdrQueryImageFileExecutionOptionsEx = NULL;
 
 static P_RtlCreateProcessParametersEx
                                     __sys_RtlCreateProcessParametersEx = NULL;
@@ -306,6 +339,8 @@ static P_UpdateProcThreadAttribute	__sys_UpdateProcThreadAttribute = NULL;
 
 static P_SetProcessMitigationPolicy	__sys_SetProcessMitigationPolicy = NULL;
 
+static P_CreateAppContainerToken    __sys_CreateAppContainerToken   = NULL;
+
 //---------------------------------------------------------------------------
 // Variables
 //---------------------------------------------------------------------------
@@ -317,6 +352,7 @@ static BOOL     g_boolWasWerFaultLastProcess = FALSE;
 
 BOOL            Dll_ElectronWorkaround = FALSE;
 
+
 //---------------------------------------------------------------------------
 // Proc_Init
 //---------------------------------------------------------------------------
@@ -324,14 +360,14 @@ BOOL            Dll_ElectronWorkaround = FALSE;
 
 _FX BOOLEAN Proc_Init(void)
 {
-    HMODULE module = NULL;
+    HMODULE module = Dll_Ntdll;
 
     P_CreateProcessInternal CreateProcessInternalW;
     ANSI_STRING ansi;
     NTSTATUS status;
 
-    if(!Dll_CompartmentMode)
-        Dll_ElectronWorkaround = Config_GetSettingsForImageName_bool(L"UseElectronWorkaround", TRUE);
+    if (!Dll_CompartmentMode)
+        Dll_ElectronWorkaround = Config_GetSettingsForImageName_bool(L"UseElectronWorkaround", FALSE);
 
     //
     // abort if we should not hook any process creation functions
@@ -348,6 +384,9 @@ _FX BOOLEAN Proc_Init(void)
     SBIEDLL_HOOK(Proc_,NtSetInformationProcess);
 
     SBIEDLL_HOOK(Proc_,NtQueryInformationProcess);
+
+    if (Dll_OsBuild >= 14942) // Windows 10
+        SbieDll_DisableCHPE();
 
     //
     // RtlCreateProcessParameters
@@ -367,6 +406,12 @@ _FX BOOLEAN Proc_Init(void)
     }
 
     //
+    // Kernel32 stuff
+    //
+
+    module = Dll_KernelBase;
+
+    //
     // UpdateProcThreadAttribute
     //
 
@@ -384,7 +429,7 @@ _FX BOOLEAN Proc_Init(void)
     // SetProcessMitigationPolicy
     //
 
-    // fox for SBIE2303 Could not hook ... (33, 1655) due to mitigation policies
+    // fix for SBIE2303 Could not hook ... (33, 1655) due to mitigation policies
     if (Dll_OsBuild >= 8400)    // win8
     {
         void* SetProcessMitigationPolicy = NULL;
@@ -393,6 +438,25 @@ _FX BOOLEAN Proc_Init(void)
             Dll_KernelBase, &ansi, 0, (void**)&SetProcessMitigationPolicy);
         if (NT_SUCCESS(status))
             SBIEDLL_HOOK(Proc_, SetProcessMitigationPolicy);
+    }
+
+    //
+    // When not in Compartment mode, Windows AppContainer isolation is not supported
+    // hook the CreateAppContainerToken and return a regular token
+    // we hook CreateAppContainerToken rather than NtCreateLowBoxToken
+    // as we don't want CreateAppContainerToken to fail when
+    // \Sessions\*\AppContainerNamedObjects\* is not open
+    //
+
+    if (!Dll_CompartmentMode)
+    if (Dll_OsBuild >= 9600) // Windows 8.1 and later
+    {
+        void* CreateAppContainerToken = NULL;
+        RtlInitString(&ansi, "CreateAppContainerToken");
+        status = LdrGetProcedureAddress(
+            Dll_KernelBase, &ansi, 0, (void**)&CreateAppContainerToken);
+        if (NT_SUCCESS(status))
+            SBIEDLL_HOOK(Proc_, CreateAppContainerToken);
     }
 
     //
@@ -447,6 +511,24 @@ _FX BOOLEAN Proc_Init(void)
 
 
 //---------------------------------------------------------------------------
+// SbieDll_DisableCHPE
+//---------------------------------------------------------------------------
+
+
+_FX BOOLEAN SbieDll_DisableCHPE(void)
+{
+    HMODULE module = Dll_Ntdll;
+
+    P_LdrQueryImageFileExecutionOptionsEx LdrQueryImageFileExecutionOptionsEx =
+        (P_LdrQueryImageFileExecutionOptionsEx) GetProcAddress(
+            Dll_Ntdll, "LdrQueryImageFileExecutionOptionsEx");
+    SBIEDLL_HOOK(Proc_, LdrQueryImageFileExecutionOptionsEx);
+
+    return TRUE;
+}
+
+
+//---------------------------------------------------------------------------
 // Proc_Init_AdvApi
 //---------------------------------------------------------------------------
 
@@ -478,7 +560,7 @@ _FX void SetTokenDefaultDaclToProcess(HANDLE hToken, HANDLE hProcess)
     DWORD dwTokenInfoLenReturn = 0;
     PTOKEN_DEFAULT_DACL pTokenInfo = NULL;
 
-    // Use hToken's default dacl on the process's security descriptor
+    // Use hToken's default DACL on the process's security descriptor
     if (__sys_GetTokenInformation && hToken && hProcess) {
 
         __sys_GetTokenInformation(hToken, TokenDefaultDacl, NULL, 0, &dwTokenInfoLen);
@@ -578,6 +660,36 @@ _FX BOOL Proc_SetProcessMitigationPolicy(
         return TRUE;
 
     return __sys_SetProcessMitigationPolicy(MitigationPolicy, lpBuffer, dwLength);
+}
+
+
+//---------------------------------------------------------------------------
+// Proc_CreateAppContainerToken
+//---------------------------------------------------------------------------
+
+
+_FX BOOL Proc_CreateAppContainerToken(
+    HANDLE TokenHandle,
+    PSECURITY_CAPABILITIES SecurityCapabilities,
+    PHANDLE OutToken)
+{
+#if 1
+    OBJECT_ATTRIBUTES objattrs;
+    SECURITY_QUALITY_OF_SERVICE QoS;
+
+    InitializeObjectAttributes(&objattrs, NULL, 0, NULL, NULL);
+    QoS.Length = sizeof(SECURITY_QUALITY_OF_SERVICE);
+    QoS.ImpersonationLevel = SecurityIdentification;
+    QoS.ContextTrackingMode = SECURITY_STATIC_TRACKING;
+    QoS.EffectiveOnly = FALSE;
+    objattrs.SecurityQualityOfService = &QoS;
+
+    NTSTATUS status = NtDuplicateToken(TokenHandle, MAXIMUM_ALLOWED, &objattrs, FALSE, TokenPrimary, OutToken);
+    return NT_SUCCESS(status);
+#else
+    BOOL ret = __sys_CreateAppContainerToken(TokenHandle, SecurityCapabilities, OutToken);
+    return ret;
+#endif
 }
 
 
@@ -722,6 +834,7 @@ _FX BOOL Proc_CreateProcessInternalW(
     // Hack: by adding a parameter to the gpu renderer process, we can fix the issue.
     //
 
+    // $Workaround$ - 3rd party fix
     if ((Dll_ImageType == DLL_IMAGE_UNSPECIFIED/* || Dll_ImageType == DLL_IMAGE_ELECTRON*/) && Dll_ElectronWorkaround)
     {
         if(lpApplicationName && lpCommandLine)
@@ -746,10 +859,34 @@ _FX BOOL Proc_CreateProcessInternalW(
     // architecture which conflicts with our restricted process model
     //
 
+    // $Workaround$ - 3rd party fix
     if (Dll_ImageType == DLL_IMAGE_FLASH_PLAYER_SANDBOX ||
         Dll_ImageType == DLL_IMAGE_ACROBAT_READER ||
         Dll_ImageType == DLL_IMAGE_PLUGIN_CONTAINER)
         hToken = NULL;
+
+    //
+    // Compatibility hack for Firefox 106.x
+    //
+
+    // $Workaround$ - 3rd party fix
+    if (Dll_ImageType == DLL_IMAGE_MOZILLA_FIREFOX && lpCommandLine 
+     // && wcsstr(lpCommandLine, L"-contentproc")
+        && wcsstr(lpCommandLine, L"-sandboxingKind")
+      )
+        hToken = NULL;
+
+    //
+    // MSEdge Compatibility hack
+    // workers of type cdm can't open SbieSvc's ALPC port
+    //
+
+    // $Workaround$ - 3rd party fix
+    if(Dll_ImageType == DLL_IMAGE_GOOGLE_CHROME && lpCommandLine
+        && wcsstr(lpCommandLine, L"--service-sandbox-type")
+      )
+        hToken = NULL;
+
 
     //
     // use a copy path for the current directory
@@ -994,6 +1131,7 @@ _FX BOOL Proc_CreateProcessInternalW(
 
     // const wchar_t* imageName = L"DcomLaunch.exe";
     // if ((lpApplicationName && wcsstr(lpApplicationName,imageName) != NULL) || (lpCommandLine && wcsstr(lpCommandLine,imageName) != NULL)) {
+    //if(wcsstr(lpCommandLine, L"renderer")) {
     //    while (!IsDebuggerPresent())
     //        Sleep(500);
     //    __debugbreak();
@@ -1075,7 +1213,7 @@ _FX BOOL Proc_CreateProcessInternalW(
                                 }
 
                                 wmemcpy(mybuff2, ptr, len);
-                                mybuff2 += len;                                
+                                mybuff2 += len;
 
                                 *end = savechar;
                             }
@@ -1085,6 +1223,8 @@ _FX BOOL Proc_CreateProcessInternalW(
                         }
 
                         Dll_Free(temp);
+
+                        *mybuff2 = L'\0';
                     }
 
                     if (! lpCurrentDirectory) { // lpCurrentDirectory must not be NULL
@@ -1208,6 +1348,23 @@ _FX BOOL Proc_CreateProcessInternalW(
             }
         }
     }
+
+    //
+    // don't let the caller specify a app container token
+    //
+
+    if (Config_GetSettingsForImageName_bool(L"DropAppContainerTokens", TRUE)) {
+        ULONG returnLength = 0;
+        BYTE appContainerBuffer[0x80];
+        if (NT_SUCCESS(NtQueryInformationToken(hToken, (TOKEN_INFORMATION_CLASS)TokenAppContainerSid, appContainerBuffer, sizeof(appContainerBuffer), &returnLength))) {
+            PTOKEN_APPCONTAINER_INFORMATION appContainerInfo = (PTOKEN_APPCONTAINER_INFORMATION)appContainerBuffer;
+            if (appContainerInfo->TokenAppContainer != NULL) {
+                hToken = NULL;
+                SbieApi_MonitorPutMsg(MONITOR_OTHER | MONITOR_TRACE, L"Dropped AppContainer Token");
+            }
+        }
+    }
+
 
     ok = __sys_CreateProcessInternalW(
         NULL, lpApplicationName, lpCommandLine,
@@ -1384,6 +1541,8 @@ finish:
             if (cancelled)
                 err = ERROR_CANCELLED;
         }
+        //else
+        //    SbieApi_Log(2226, L"%S [%S]", Dll_ImageName, Dll_BoxName);
     }
 
     /*if ((! ok) && (err == ERROR_ELEVATION_REQUIRED)) {
@@ -1447,11 +1606,13 @@ _FX BOOL Proc_AlternateCreateProcess(
         return TRUE;        // exit CreateProcessInternal
     }
 
+#ifndef _WIN64
     if (Proc_IsSplWow64(lpApplicationName, lpCommandLine,
                         lpProcessInformation)) {
 
         return FALSE;       // continue with CreateProcessInternal
     }
+#endif
 
     if (Proc_IsForcedElevation(lpCommandLine,
                                lpCurrentDirectory,
@@ -1879,6 +2040,38 @@ _FX NTSTATUS Proc_SectionCallback(HANDLE FileHandle)
     }
 
     return STATUS_SUCCESS;
+}
+
+
+//---------------------------------------------------------------------------
+// Proc_LdrQueryImageFileExecutionOptionsEx
+//---------------------------------------------------------------------------
+
+
+_FX NTSTATUS Proc_LdrQueryImageFileExecutionOptionsEx(
+    PUNICODE_STRING SubKey,
+    PCWSTR ValueName,
+    ULONG Type,
+    PVOID Buffer,
+    ULONG BufferSize,
+    PULONG ReturnedLength,
+    BOOLEAN Wow64)
+{
+    //
+    // Sandboxie on ARM64 requires x86 applications NOT to use the CHPE binaries.
+    //
+    // This hook causes CreateProcessInternalW to set PsAttributeChpe = 0 which
+    // makes the kernel load the regular non hybrid version of ntdll into the new process.
+    //
+    // See comment in HookImageOptionsEx core/low/init.c for more details.
+    //
+
+	if (_wcsicmp(ValueName, L"LoadCHPEBinaries") == 0) {
+		*(ULONG*)Buffer = 0;
+		return STATUS_SUCCESS;
+	}
+
+	return __sys_LdrQueryImageFileExecutionOptionsEx(SubKey, ValueName, Type, Buffer, BufferSize, ReturnedLength, Wow64);
 }
 
 
@@ -2519,7 +2712,7 @@ _FX BOOLEAN Proc_IsSoftwareUpdateW(const WCHAR *path)
 // Proc_IsSplWow64
 //---------------------------------------------------------------------------
 
-
+#ifndef _WIN64
 _FX BOOLEAN Proc_IsSplWow64(
     const WCHAR *lpApplicationName, const WCHAR *lpCommandLine,
     LPPROCESS_INFORMATION lpProcessInformation)
@@ -2547,7 +2740,7 @@ _FX BOOLEAN Proc_IsSplWow64(
 
     return TRUE;
 }
-
+#endif
 
 //---------------------------------------------------------------------------
 // Proc_Init_AdvPack
@@ -2705,9 +2898,9 @@ _FX RTL_USER_PROCESS_PARAMETERS *Proc_GetRtlUserProcessParameters(void)
     RTL_USER_PROCESS_PARAMETERS *ProcessParms =
         (RTL_USER_PROCESS_PARAMETERS *)
 #ifdef _WIN64
-            (*(ULONG_PTR *)(__readgsqword(0x60) + 0x20));
+            (*(ULONG_PTR *)(NtCurrentPeb() + 0x20));
 #else
-            (*(ULONG_PTR *)(__readfsdword(0x30) + 0x10));
+            (*(ULONG_PTR *)(NtCurrentPeb() + 0x10));
 #endif _WIN64
     return ProcessParms;
 }

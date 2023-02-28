@@ -262,6 +262,12 @@ _FX NTSTATUS Process_Low_Api_InjectComplete(PROCESS *proc, ULONG64 *parms)
 
         if (proc) {
 
+            //
+            // the service dynamically allocates a per box SID to be used,
+            // if no SID is provided this feature is either disabled or failed
+            // then we fall back to using the default anonymous SID
+            //
+
             __try {
 
                 PSID pSID = (PSID)(ULONG_PTR)parms[2];

@@ -78,7 +78,7 @@ public:
 	virtual bool			GetProcessExemption(quint32 process_id, quint32 action_id);
 
 	virtual QString			GetBoxedPath(const QString& BoxName, const QString& Path);
-	virtual QString			GetBoxedPath(CSandBox* pBox, const QString& Path);
+	virtual QString			GetBoxedPath(CSandBox* pBox, const QString& Path, const QString& Snapshot = QString());
 	virtual QString			GetRealPath(CSandBox* pBox, const QString& Path);
 
 	enum ESetMode
@@ -130,11 +130,13 @@ public:
 	virtual SB_STATUS		EnableMonitor(bool Enable);
 	virtual bool			IsMonitoring();
 
-	virtual void			AddTraceEntry(const CTraceEntryPtr& LogEntry, bool bCanMerge = false);
-	virtual QVector<CTraceEntryPtr> GetTrace() const;
-	virtual void			ClearTrace() { QWriteLocker Lock(&m_TraceMutex); m_TraceList.clear(); m_LastTraceEntry = 0; }
+	virtual const QVector<CTraceEntryPtr>& GetTrace();
+	virtual int				GetTraceCount() const { return m_TraceList.count(); }
+	virtual void			ClearTrace() { m_TraceList.clear(); QMutexLocker Lock(&m_TraceMutex); m_TraceCache.clear(); }
 
 	// Other
+	virtual quint64			QueryProcessInfo(quint32 ProcessId, quint32 InfoClass = 0);
+
 	virtual QString			GetSbieMsgStr(quint32 code, quint32 Lang = 1033);
 
 	virtual SB_STATUS		RunStart(const QString& BoxName, const QString& Command, bool Elevated = false, const QString& WorkingDir = QString(), QProcess* pProcess = NULL);
@@ -155,6 +157,8 @@ public:
 	};
 
 	void					LoadEventLog();
+
+	virtual SB_RESULT(int)	RunUpdateUtility(const QStringList& Params, quint32 Elevate = 0, bool Wait = false);
 
 public slots:
 	virtual void			SendReplyData(quint32 RequestId, const QVariantMap& Result);
@@ -200,8 +204,6 @@ protected:
 	virtual bool			GetLog();
 	virtual bool			GetMonitor();
 
-	virtual quint32			QueryProcessInfo(quint32 ProcessId, quint32 InfoClass = 0);
-
 	virtual SB_STATUS		TerminateAll(const QString& BoxName);
 	virtual SB_STATUS		Terminate(quint32 ProcessId);
 
@@ -220,9 +222,9 @@ protected:
 	QMap<QString, CSandBoxPtr> m_SandBoxes;
 	QMap<quint32, CBoxedProcessPtr> m_BoxedProxesses;
 
-	mutable QReadWriteLock	m_TraceMutex;
+	mutable QMutex			m_TraceMutex;
+	QVector<CTraceEntryPtr>	m_TraceCache;
 	QVector<CTraceEntryPtr>	m_TraceList;
-	int						m_LastTraceEntry;
 
 	mutable QReadWriteLock	m_DriveLettersMutex;
 	struct SDrive

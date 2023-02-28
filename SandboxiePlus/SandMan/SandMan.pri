@@ -17,7 +17,9 @@ HEADERS += ./stdafx.h \
     ./Views/TraceView.h \
     ./Dialogs/MultiErrorDialog.h \
     ./Helpers/FindTool.h \
+    ./Helpers/FullScreen.h \
     ./Helpers/WinAdmin.h \
+    ./Helpers/WinHelper.h \
     ./Helpers/ReadDirectoryChanges.h \
     ./Helpers/ReadDirectoryChangesPrivate.h \
     ./Windows/NewBoxWindow.h \
@@ -29,6 +31,7 @@ HEADERS += ./stdafx.h \
     ./Windows/SelectBoxWindow.h \
     ./Windows/SupportDialog.h\
     ./OnlineUpdater.h \
+    ./Wizards/NewBoxWizard.h \
     ./Wizards/SetupWizard.h
 
 SOURCES += ./main.cpp \
@@ -46,7 +49,9 @@ SOURCES += ./main.cpp \
     ./Views/TraceView.cpp \
     ./Dialogs/MultiErrorDialog.cpp \
     ./Helpers/FindTool.cpp \
+    ./Helpers/FullScreen.cpp \
     ./Helpers/WinAdmin.cpp \
+    ./Helpers/WinHelper.cpp \
     ./Helpers/ReadDirectoryChanges.cpp \
     ./Helpers/ReadDirectoryChangesPrivate.cpp \
     ./Helpers/WindowFromPointEx.cpp \
@@ -59,6 +64,7 @@ SOURCES += ./main.cpp \
     ./Windows/SelectBoxWindow.cpp \
     ./Windows/SupportDialog.cpp\
     ./OnlineUpdater.cpp \
+    ./Wizards/NewBoxWizard.cpp \
     ./Wizards/SetupWizard.cpp
 
 FORMS += ./Forms/NewBoxWindow.ui \
@@ -83,6 +89,7 @@ TRANSLATIONS += sandman_de.ts \
     sandman_sv_SE.ts \
     sandman_tr.ts \
     sandman_uk.ts \
+    sandman_vi.ts \
     sandman_zh_CN.ts \
     sandman_zh_TW.ts
 

@@ -1,6 +1,6 @@
 /*
  * Copyright 2004-2020 Sandboxie Holdings, LLC 
- * Copyright 2020-2022 David Xanatos, xanasoft.com
+ * Copyright 2020-2023 David Xanatos, xanasoft.com
  *
  * This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -2888,6 +2888,7 @@ ReparseLoop:
 
         if (CreateOptions & FILE_DELETE_ON_CLOSE) {
 
+            // $Workaround$ - 3rd party fix
             if (Dll_DigitalGuardian && (PATH_IS_WRITE(mp_flags) || PATH_IS_CLOSED(mp_flags)))
             {
                 HaveTrueFile = 'N';
@@ -2960,13 +2961,19 @@ ReparseLoop:
 
             BOOLEAN use_rule_specificity = (Dll_ProcessFlags & SBIE_FLAG_RULE_SPECIFICITY) != 0;
 
-            if (use_rule_specificity && SbieDll_HasReadableSubPath(L'f', TruePath)){
+            if (use_rule_specificity && SbieDll_HasReadableSubPath(L'f', OriginalPath ? OriginalPath : TruePath)){
 
                 //
                 // When using Rule specificity we need to create some dummy directories 
                 //
 
                 File_CreateBoxedPath(TruePath);
+            }
+            else if (OriginalPath) {
+
+                status = File_GetFileType(&objattrs, FALSE, &FileType, NULL);
+                if (status == STATUS_NOT_A_DIRECTORY)
+                    status = STATUS_ACCESS_DENIED;
             }
             else {
 
@@ -3071,7 +3078,7 @@ ReparseLoop:
             // to make sure File_CheckCreateParameters won't fail
             //
 
-            if (PATH_IS_WRITE(mp_flags) && NT_SUCCESS(status)) {
+            if (PATH_IS_WRITE(mp_flags) && NT_SUCCESS(status) && !OriginalPath) {
                 DesiredAccess |= FILE_GENERIC_WRITE;
                 FileType &= ~(TYPE_READ_ONLY | TYPE_SYSTEM);
             }
@@ -3118,6 +3125,19 @@ ReparseLoop:
                 ((CreateOptions & FILE_DELETE_ON_CLOSE) == 0)) {
 
                 DesiredAccess &= ~DELETE;
+            }
+
+            //
+            // firefox starting with version 106 opens plugin exe's with GENERIC_WRITE
+            // to mitigate this issue we strip this flag when we detect that it tries to 
+            // do that with an exe that exists outside the sandbox
+            //
+
+            // $Workaround$ - 3rd party fix
+            if (Dll_ImageType == DLL_IMAGE_MOZILLA_FIREFOX && (DesiredAccess & GENERIC_WRITE)) {
+                const WCHAR *dot = wcsrchr(TruePath, L'.');
+                if (dot && _wcsicmp(dot, L".exe") == 0)
+                    DesiredAccess &= ~GENERIC_WRITE;
             }
 
             //
@@ -3211,7 +3231,7 @@ ReparseLoop:
             status = STATUS_OBJECT_PATH_NOT_FOUND;
 
             //
-            // if this is a create operation check if the parent fodler is ok and if so clear the error
+            // if this is a create operation check if the parent folder is ok and if so clear the error
             //
 
             if (CreateDisposition != FILE_OPEN && CreateDisposition != FILE_OVERWRITE) {
@@ -4023,7 +4043,7 @@ _FX BOOLEAN File_CheckDeletedParent(WCHAR *CopyPath)
         }
 
 		//
-		// If we have snapshots check thair status, if we have a entry in the most recent snapshot
+		// If we have snapshots check their status, if we have a entry in the most recent snapshot
 		// than older delete markings are not relevant
 		//
 
@@ -4866,6 +4886,7 @@ _FX NTSTATUS File_NtQueryFullAttributesFileImpl(
     WCHAR *CopyPath;
     ULONG FileFlags, FileAttrs, mp_flags;
     ULONG TruePathFlags;
+    WCHAR* OriginalPath;
 
     //
     // special case:  when it starts, the Windows Explorer process looks
@@ -5001,9 +5022,12 @@ _FX NTSTATUS File_NtQueryFullAttributesFileImpl(
     // Check true path relocation
     //
 
+    OriginalPath = NULL;
     WCHAR* OldTruePath = File_ResolveTruePath(TruePath, CopyPath, &TruePathFlags);
-    if (OldTruePath)
+    if (OldTruePath) {
+        OriginalPath = TruePath;
         TruePath = OldTruePath;
+    }
 
     //
     // check if this is a write-only path.  if the path is not
@@ -5015,13 +5039,16 @@ _FX NTSTATUS File_NtQueryFullAttributesFileImpl(
 
         BOOLEAN use_rule_specificity = (Dll_ProcessFlags & SBIE_FLAG_RULE_SPECIFICITY) != 0;
 
-        if (use_rule_specificity && SbieDll_HasReadableSubPath(L'f', TruePath)){
+        if (use_rule_specificity && SbieDll_HasReadableSubPath(L'f', OriginalPath ? OriginalPath : TruePath)){
 
             //
             // When using Rule specificity we need to create some dummy directories 
             //
 
-            File_CreateBoxedPath(TruePath);
+            File_CreateBoxedPath(OriginalPath ? OriginalPath : TruePath);
+        }
+        else if (OriginalPath) {
+            ; // try TruePath which points by now to the snapshot location
         }
         else {
 
@@ -6298,8 +6325,8 @@ _FX LONG File_RenameOpenFile(
     BOOLEAN replace_if_exists)
 {
     //
-    // in compartment mode we dont need driver assistance we can do things ourselvs
-    // this code is a port of the same routine in teh driver
+    // in compartment mode we don't need driver assistance we can do things ourselves
+    // this code is a port of the same routine in the driver
     //
 
     NTSTATUS status;
@@ -6779,6 +6806,7 @@ _FX NTSTATUS File_RenameFile(
             {
                 status = STATUS_OBJECT_NAME_NOT_FOUND;
             }
+            // $Workaround$ - 3rd party fix
             else if (!Dll_DigitalGuardian)
             {
                 status = __sys_NtQueryFullAttributesFile(&objattrs, &open_info);
@@ -6928,7 +6956,7 @@ after_rename:
             else {
 
                 //
-                // if it does nto exist check if it was a directory, it may be a boxed directroy 
+                // if it does not exist check if it was a directory, it may be a boxed directory 
                 // which is a relocation target in which case we will need to update the relocation data
                 //
 
@@ -7097,10 +7125,10 @@ _FX ULONG SbieDll_GetHandlePath(
     Dll_PushTlsNameBuffer(TlsData);
 
     //
-    // This function returns actual paths as thay exist in the real filesystem
+    // This function returns actual paths as they exist in the real filesystem
     // copy paths may point to the snapshot if the file is there
-    // and true paths will point to the original location if thay rere redirected
-    // ther for calling hooked file functions on these paths may run into file not found 
+    // and true paths will point to the original location if they're redirected
+    // therefore calling hooked file functions on these paths may run into file not found 
     // when the original location is marked as deleted
     //
 
@@ -7377,6 +7405,41 @@ _FX void SbieDll_DeviceChange(WPARAM wParam, LPARAM lParam)
     }
 }
 
+
+//---------------------------------------------------------------------------
+// SbieDll_QueryFileAttributes
+//---------------------------------------------------------------------------
+
+
+BOOL SbieDll_QueryFileAttributes(const WCHAR *NtPath, ULONG64 *size, ULONG64 *date, ULONG *attrs)
+{
+    NTSTATUS status;
+    UNICODE_STRING uni;
+    OBJECT_ATTRIBUTES objattrs;
+    FILE_NETWORK_OPEN_INFORMATION info;
+
+    uni.Buffer = (WCHAR *)NtPath;
+    uni.Length = wcslen(NtPath) * sizeof(WCHAR);
+    uni.MaximumLength = uni.Length + sizeof(WCHAR);
+
+    InitializeObjectAttributes(
+        &objattrs, &uni, OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+    if(__sys_NtQueryFullAttributesFile)
+        status = __sys_NtQueryFullAttributesFile(&objattrs, &info);
+    else
+        status = NtQueryFullAttributesFile(&objattrs, &info);
+
+    if (! NT_SUCCESS(status))
+        return FALSE;
+
+    if(size) *size = info.EndOfFile.QuadPart;
+    if(date) *date = info.LastWriteTime.QuadPart;
+    if(attrs) *attrs = info.FileAttributes;
+    return TRUE;
+}
+
+
 // We don't want calls to StopTailCallOptimization to be optimized away
 #pragma optimize("", off)
 
@@ -7385,6 +7448,7 @@ _FX NTSTATUS StopTailCallOptimization(NTSTATUS status)
     return status;
 }
 
+// $Workaround$ - 3rd party fix
 _FX BOOLEAN DigitalGuardian_Init(HMODULE hModule)
 {
     Dll_DigitalGuardian = hModule;

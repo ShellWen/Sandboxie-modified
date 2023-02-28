@@ -24,7 +24,7 @@ void CSandMan::CreateTrayIcon()
 	m_pTrayIcon->setToolTip(GetTrayText());
 	connect(m_pTrayIcon, SIGNAL(activated(QSystemTrayIcon::ActivationReason)), this, SLOT(OnSysTray(QSystemTrayIcon::ActivationReason)));
 	m_bIconEmpty = true;
-	m_bIconDisabled = false;
+	m_iIconDisabled = -1;
 	m_bIconBusy = false;
 	m_iDeletingContent = 0;
 
@@ -42,7 +42,7 @@ void CSandMan::CreateTrayIcon()
 void CSandMan::CreateTrayMenu()
 {
 	m_pTrayMenu = new QMenu();
-	QAction* pShowHide = m_pTrayMenu->addAction(GetIcon("IconFull", false), tr("Show/Hide"), this, SLOT(OnShowHide()));
+	QAction* pShowHide = m_pTrayMenu->addAction(GetIcon("IconFull", 2), tr("Show/Hide"), this, SLOT(OnShowHide()));
 	QFont f = pShowHide->font();
 	f.setBold(true);
 	pShowHide->setFont(f);
@@ -61,7 +61,7 @@ void CSandMan::CreateTrayMenu()
 
 		QWidget* pWidget = new CActionWidget();
 		QHBoxLayout* pLayout = new QHBoxLayout();
-		pLayout->setMargin(0);
+		pLayout->setContentsMargins(0,0,0,0);
 		pWidget->setLayout(pLayout);
 
 		m_pTrayBoxes = new QTreeWidget();
@@ -124,7 +124,7 @@ void CSandMan::CreateTrayMenu()
 	m_pTrayMenu->addAction(m_pExit);
 }
 
-QIcon CSandMan::GetTrayIcon(bool isConnected)
+QIcon CSandMan::GetTrayIcon(bool isConnected, bool bSun)
 {
 	bool bClassic = (theConf->GetInt("Options/SysTrayIcon", 1) == 2);
 
@@ -142,26 +142,28 @@ QIcon CSandMan::GetTrayIcon(bool isConnected)
 	QPixmap result(size);
 	result.fill(Qt::transparent); // force alpha channel
 	QPainter painter(&result);
-	QPixmap base = GetIcon(IconFile, false).pixmap(size);
+	QPixmap base = GetIcon(IconFile, 0).pixmap(size);
 	QPixmap overlay;
 
 	if (m_bIconBusy) {
 		IconFile = "IconBusy";
 		if (bClassic) { // classic has a different icon instead of an overlay
 			IconFile += "C";
-			base = GetIcon(IconFile, false).pixmap(size);
+			base = GetIcon(IconFile, 0).pixmap(size);
 		}
 		else
-			overlay = GetIcon(IconFile, false).pixmap(size);
+			overlay = GetIcon(IconFile, 0).pixmap(size);
 	}
+	else if(bSun)
+		overlay = GetIcon("IconSun", 0).pixmap(size);
 
 	painter.drawPixmap(0, 0, base);
 	if(!overlay.isNull()) painter.drawPixmap(0, 0, overlay);
 
-	if (m_bIconDisabled) {
+	if (m_iIconDisabled == 1) {
 		IconFile = "IconDFP";
 		if (bClassic) IconFile += "C";
-		overlay = GetIcon(IconFile, false).pixmap(size);
+		overlay = GetIcon(IconFile, 0).pixmap(size);
 		painter.drawPixmap(0, 0, overlay);
 	}
 
@@ -240,7 +242,10 @@ QAction* CSandMan__MakeBoxEntry(QMenu* pMenu, CSandBoxPlus* pBoxEx, QFileIconPro
 	QAction* pBoxAction = new QAction(pBoxEx->GetName().replace("_", " "));
 	if (!iNoIcons) {
 		QIcon Icon;
-		if (ColorIcons)
+		QString Action = pBoxEx->GetText("DblClickAction");
+		if (!Action.isEmpty() && Action.left(1) != "!")
+			Icon = IconProvider.icon(QFileInfo(pBoxEx->GetCommandFile(Action)));
+		else if (ColorIcons)
 			Icon = theGUI->GetColorIcon(pBoxEx->GetColor(), pBoxEx->GetActiveProcessCount());
 		else
 			Icon = theGUI->GetBoxIcon(pBoxEx->GetType(), pBoxEx->GetActiveProcessCount() != 0);
@@ -386,7 +391,9 @@ void CSandMan::OnSysTray(QSystemTrayIcon::ActivationReason Reason)
 					pItem->setData(0, Qt::UserRole, pBox->GetName());
 					QIcon Icon;
 					QString Action = pBox->GetText("DblClickAction");
-					if(ColorIcons)
+					if (!Action.isEmpty() && Action.left(1) != "!")
+						Icon = IconProvider.icon(QFileInfo(pBoxEx->GetCommandFile(Action)));
+					else if(ColorIcons)
 						Icon = theGUI->GetColorIcon(pBoxEx->GetColor(), pBox->GetActiveProcessCount());
 					else
 						Icon = theGUI->GetBoxIcon(pBoxEx->GetType(), pBox->GetActiveProcessCount() != 0);
@@ -405,7 +412,7 @@ void CSandMan::OnSysTray(QSystemTrayIcon::ActivationReason Reason)
 
 				bool bAdded = false;
 				if (m_pTrayBoxes->topLevelItemCount() == 0)
-					bAdded = true; // triger size refresh
+					bAdded = true; // trigger size refresh
 
 				QMap<QString, QTreeWidgetItem*> OldBoxes;
 				for (int i = 0; i < m_pTrayBoxes->topLevelItemCount(); ++i)

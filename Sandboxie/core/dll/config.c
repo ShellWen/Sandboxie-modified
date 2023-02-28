@@ -23,7 +23,7 @@
 #define NOGDI
 #include "dll.h"
 #include "common/pool.h"
-#include "common\pattern.h"
+#include "common/pattern.h"
 #include "core/svc/SbieIniWire.h"
 
 //---------------------------------------------------------------------------
@@ -215,6 +215,14 @@ _FX WCHAR* Config_MatchImageAndGetValue(WCHAR* value, const WCHAR* ImageName, UL
     if (tmp) {
 
         BOOLEAN inv, match;
+
+        //
+        // ignore all process specific presets when no image name was provided
+        // keep searching for a global default
+        //
+
+        if (!ImageName)
+            return NULL;
 
         //
         // exclamation marks negates the matching

@@ -1216,9 +1216,9 @@ _FX HANDLE Sxs_CreateActCtxW(ACTCTX *ActCtx)
     if (ActCtx->dwFlags & ACTCTX_FLAG_SET_PROCESS_DEFAULT) {
 
 #ifdef _WIN64
-        pActivationContextData = (ULONG_PTR *)(__readgsqword(0x60) + 0x2F8);
+        pActivationContextData = (ULONG_PTR *)(NtCurrentPeb() + 0x2F8);
 #else
-        pActivationContextData = (ULONG_PTR *)(__readfsdword(0x30) + 0x1F8);
+        pActivationContextData = (ULONG_PTR *)(NtCurrentPeb() + 0x1F8);
 #endif _WIN64
 
         if (*pActivationContextData) {
@@ -1656,7 +1656,7 @@ _FX BOOLEAN Sxs_InitKernel32(void)
 
         if (Dll_ImageType == DLL_IMAGE_SANDBOXIE_RPCSS ||
 
-                SbieApi_QueryConfBool(NULL, L"DisableBoxedWinSxS", FALSE)) {
+                Config_GetSettingsForImageName_bool(L"DisableBoxedWinSxS", FALSE)) {
 
             Sxs_UseAltCreateActCtx = TRUE;
         }
@@ -1682,6 +1682,8 @@ _FX BOOLEAN Sxs_InitKernel32(void)
         }
     }
 
+    module = Dll_Ntdll;
+
     //
     // Opera hooks NtSetInformationThread. SboxDll calls __sys_NtSetInformationThread to bypass Opera hook.
     // See the comment about Thread_SetInformationThread_ChangeNotifyToken in Gui_ConnectToWindowStationAndDesktop
@@ -1698,8 +1700,6 @@ _FX BOOLEAN Sxs_InitKernel32(void)
 
     if (Dll_ImageType != DLL_IMAGE_TRUSTED_INSTALLER)
         return TRUE;
-
-    module = Dll_Ntdll;
 
     NtCreateTransaction   = GetProcAddress(module, "NtCreateTransaction");
     NtOpenTransaction     = GetProcAddress(module, "NtOpenTransaction");
@@ -1759,6 +1759,8 @@ _FX BOOLEAN Sxs_InitKernel32(void)
     //
 
     if (Dll_OsBuild >= 8400) {
+
+        module = Dll_KernelBase;
 
         typedef BOOL (*P_CheckTokenMembership)(
             HANDLE hToken, void *pSid, BOOL *IsMember);
@@ -1823,9 +1825,9 @@ _FX void Sxs_ActivateDefaultManifest(void *ImageBase)
         ULONG_PTR *pActivationContextData;
 
 #ifdef _WIN64
-        pActivationContextData = (ULONG_PTR *)(__readgsqword(0x60) + 0x2F8);
+        pActivationContextData = (ULONG_PTR *)(NtCurrentPeb() + 0x2F8);
 #else
-        pActivationContextData = (ULONG_PTR *)(__readfsdword(0x30) + 0x1F8);
+        pActivationContextData = (ULONG_PTR *)(NtCurrentPeb() + 0x1F8);
 #endif _WIN64
 
         *pActivationContextData = 0;
@@ -2011,7 +2013,7 @@ _FX BOOLEAN Sxs_PreferExternal(THREAD_DATA *TlsData)
         return FALSE;
 
     //
-    // KB5014019 breaks edge, it seams making edge start its child processes with 
+    // KB5014019 breaks Edge, it seems that making Edge to start its child processes with
     // PreferExternalManifest fixes the issue, but the main process must be loaded normally
     // hence we have ExternalManifestHack that checks the parent and not the target
     //

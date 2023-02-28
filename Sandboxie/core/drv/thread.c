@@ -28,6 +28,7 @@
 #include "obj.h"
 #include "session.h"
 #include "api.h"
+#include "util.h"
 
 
 //---------------------------------------------------------------------------
@@ -40,7 +41,7 @@ static void Thread_Notify(HANDLE ProcessId, HANDLE ThreadId, BOOLEAN Create);
 static PROCESS *Thread_FindAndInitProcess(
     PROCESS *proc1, void *ProcessObject2, KIRQL *out_irql);
 
-static THREAD *Thread_GetOrCreate(PROCESS *proc, HANDLE tid, BOOLEAN create);
+THREAD *Thread_GetOrCreate(PROCESS *proc, HANDLE tid, BOOLEAN create);
 
 static NTSTATUS Thread_MyImpersonateClient(
     PETHREAD ThreadObject, void *TokenObject,
@@ -53,11 +54,11 @@ static NTSTATUS Thread_MyImpersonateClient(
 
 static NTSTATUS Thread_CheckProcessObject(
     PROCESS *proc, void *Object, UNICODE_STRING *Name,
-    ACCESS_MASK GrantedAccess);
+    ULONG Operation, ACCESS_MASK GrantedAccess);
 
 static NTSTATUS Thread_CheckThreadObject(
     PROCESS *proc, void *Object, UNICODE_STRING *Name,
-    ACCESS_MASK GrantedAccess);
+    ULONG Operation, ACCESS_MASK GrantedAccess);
 
 
 //---------------------------------------------------------------------------
@@ -584,7 +585,7 @@ _FX NTSTATUS Thread_MyImpersonateClient(
     NTSTATUS status = PsImpersonateClient(ThreadObject, TokenObject,
                         CopyOnOpen, EffectiveOnly, SecurityIdentification);
 
-    // Hard Offset Dependency
+    // $Offset$ - Hard Offset Dependency
 
     // ***** ImpersonationInfo_offset is the offset of ClientSecurity field in nt!ETHREAD structure *****
 
@@ -592,7 +593,15 @@ _FX NTSTATUS Thread_MyImpersonateClient(
 
         ULONG ImpersonationInfo_offset = 0;
 
-#ifdef _WIN64
+#ifdef _M_ARM64
+
+        if (Driver_OsBuild <= 19041) // win 10
+            ImpersonationInfo_offset = 0x4C8;
+
+        else // win 11
+            ImpersonationInfo_offset = 0x518;
+
+#elif _WIN64
 
         // offset of ClientSecurity field in nt!ETHREAD structure
 
@@ -730,7 +739,7 @@ _FX NTSTATUS Thread_MyImpersonateClient(
                     if ((*ImpersonationInfo & ~7) == (ULONG_PTR)TokenObject)
                     {
                         WCHAR str[64];
-                        RtlStringCbPrintfW(str, 64, L"BAM! found: %d", i);
+                        RtlStringCbPrintfW(str, 64, L"BAM! found: %d for %d", i, Driver_OsBuild);
                         Session_MonitorPut(MONITOR_OTHER, str, PsGetCurrentProcessId());
                     }
                 }
@@ -948,7 +957,7 @@ _FX NTSTATUS Thread_StoreThreadToken(PROCESS *proc)
 
 _FX NTSTATUS Thread_CheckProcessObject(
     PROCESS *proc, void *Object, UNICODE_STRING *Name,
-    ACCESS_MASK GrantedAccess)
+    ULONG Operation, ACCESS_MASK GrantedAccess)
 {
     if (Obj_CallbackInstalled) return STATUS_SUCCESS; // ObCallbacks takes care of that already
     PEPROCESS ProcessObject = (PEPROCESS)Object;
@@ -963,7 +972,7 @@ _FX NTSTATUS Thread_CheckProcessObject(
 
 _FX NTSTATUS Thread_CheckThreadObject(
     PROCESS *proc, void *Object, UNICODE_STRING *Name,
-    ACCESS_MASK GrantedAccess)
+    ULONG Operation, ACCESS_MASK GrantedAccess)
 {
     if (Obj_CallbackInstalled) return STATUS_SUCCESS; // ObCallbacks takes care of that already
     PEPROCESS ProcessObject = PsGetThreadProcess(Object);
@@ -1126,6 +1135,155 @@ finish:
         Mem_Free(nbuf, nlen);
 
     return status;
+}
+
+
+//---------------------------------------------------------------------------
+// Thread_CheckObject_CommonEx
+//---------------------------------------------------------------------------
+
+
+_FX ACCESS_MASK Thread_CheckObject_CommonEx(
+    HANDLE pid, PEPROCESS ProcessObject,
+    ACCESS_MASK DesiredAccess, BOOLEAN EntireProcess,
+    BOOLEAN ExplicitAccess)
+{
+    //
+    // Ignore requests for threads belonging to the current processes.
+    //
+
+    HANDLE cur_pid = PsGetCurrentProcessId();
+    if (pid == cur_pid)
+        return DesiredAccess;
+
+    //
+    // Get the sandboxed process if this request comes form one
+    //
+
+    PROCESS *proc = Process_Find(NULL, NULL);
+
+    //
+    // This functionality allows to protect boxed processes from host processes
+    // we need to grant access to sbiesvc.exe and csrss.exe
+    // 
+    // If the calling process is sandboxed the later common check will do the blocking
+    //
+
+    if (!proc || proc->bHostInject) { // caller is not sandboxed
+
+        if (Process_Find(pid, NULL)) {  // target is sandboxed - lock free check
+        
+            void* nbuf = 0;
+            ULONG nlen = 0;
+            WCHAR* nptr = 0;
+            Process_GetProcessName(Driver_Pool, (ULONG_PTR)cur_pid, &nbuf, &nlen, &nptr); // driver verifier: when calling this IRQL must be PASSIVE_LEVEL
+            if (nbuf) {
+
+                BOOLEAN protect_process = FALSE;
+
+                KIRQL irql;
+                PROCESS* proc2 = Process_Find(pid, &irql);
+
+                if (proc2 && !proc2->bHostInject) {
+
+                    ACCESS_MASK WriteAccess;
+                    if (EntireProcess)
+                        WriteAccess = (DesiredAccess & PROCESS_DENIED_ACCESS_MASK);
+                    else
+                        WriteAccess = (DesiredAccess & THREAD_DENIED_ACCESS_MASK);
+
+                    if (WriteAccess || proc2->confidential_box) {
+
+                        protect_process = Process_GetConfEx_bool(proc2->box, nptr, L"DenyHostAccess", FALSE);
+
+                        //
+                        // in case use specified wildcard "*" always grant access to sbiesvc.exe and csrss.exe
+                        // and a few others
+                        //
+
+                        if (protect_process /*&& MyIsProcessRunningAsSystemAccount(cur_pid)*/) {
+                            if ((_wcsicmp(nptr, SBIESVC_EXE) == 0) || (_wcsicmp(nptr, L"csrss.exe") == 0)
+                                || (_wcsicmp(nptr, L"conhost.exe") == 0)
+                                || (_wcsicmp(nptr, L"taskmgr.exe") == 0) || (_wcsicmp(nptr, L"sandman.exe") == 0))
+                                protect_process = FALSE;
+                        }
+
+                        if (protect_process) {
+                            WCHAR msg_str[256];
+                            RtlStringCbPrintfW(msg_str, sizeof(msg_str), L"Protect boxed processes %s (%d) from %s (%d) requesting 0x%08X", proc2->image_name, (ULONG)pid, nptr, (ULONG)cur_pid, DesiredAccess);
+                            Session_MonitorPut(MONITOR_IMAGE | MONITOR_TRACE, msg_str, pid);
+                        }
+                    }
+                }
+
+                ExReleaseResourceLite(Process_ListLock);
+                KeLowerIrql(irql);
+
+                Mem_Free(nbuf, nlen);
+
+                if (protect_process)
+                    return 0; // deny access
+            }
+        }
+    }
+
+    //
+    // filter only requests from sandboxed processes
+    //
+
+    if (!proc || (proc == PROCESS_TERMINATED) || proc->bHostInject || proc->disable_object_flt)
+        return DesiredAccess;
+
+    if (!NT_SUCCESS(Thread_CheckObject_Common(proc, ProcessObject, DesiredAccess, EntireProcess, ExplicitAccess))) {
+
+#ifdef DRV_BREAKOUT
+        if (EntireProcess) {
+            //
+            // Check if this is a break out process
+            //
+
+            BOOLEAN is_breakout = FALSE;
+            PROCESS* proc2;
+            KIRQL irql;
+
+            proc2 = Process_Find(pid, &irql);
+            if (proc2 && Process_IsStarter(proc, proc2)) {
+                is_breakout = TRUE;
+            }
+
+            ExReleaseResourceLite(Process_ListLock);
+            KeLowerIrql(irql);
+
+            if (is_breakout) {
+
+                //
+                // this is a BreakoutProcess in this case we need to grant some permissions
+                //
+
+                return DesiredAccess & (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE |
+                    /**/PROCESS_TERMINATE |
+                    //PROCESS_CREATE_THREAD |
+                    //PROCESS_SET_SESSIONID | 
+                    /**/PROCESS_VM_OPERATION | // needed
+                    PROCESS_VM_READ |
+                    /**/PROCESS_VM_WRITE | // needed
+                    //PROCESS_DUP_HANDLE |
+                    PROCESS_CREATE_PROCESS |
+                    //PROCESS_SET_QUOTA | 
+                    /**/PROCESS_SET_INFORMATION | // needed
+                    PROCESS_QUERY_INFORMATION |
+                    /**/PROCESS_SUSPEND_RESUME | // needed
+                    PROCESS_QUERY_LIMITED_INFORMATION |
+                    //PROCESS_SET_LIMITED_INFORMATION |
+                    0);
+            }
+        }
+#endif
+
+        return 0;
+    }
+
+    return DesiredAccess;
 }
 
 

@@ -310,12 +310,12 @@ _FX BOX *Process_GetForcedStartBox(
 
 		if ((force_alert == 0) && Conf_Get_Boolean(NULL, L"StartRunAlertDenied", 0, FALSE))
 		{
-			if(Conf_Get_Boolean(NULL, L"NotifyStartRunAccessDenied", 0, TRUE))
+			if(Conf_Get_Boolean(NULL, L"AlertStartRunAccessDenied", 0, TRUE))
 				Log_Msg_Process(MSG_1308, ImageName, NULL, SessionId, ProcessId);
 
 			box = (BOX *)-1;
 		}
-		else if ((force_alert == 1) && Conf_Get_Boolean(NULL, L"NotifyForceProcessDisabled", 0, FALSE))
+		else if ((force_alert == 0) || ((force_alert == 1) && Conf_Get_Boolean(NULL, L"NotifyForceProcessDisabled", 0, FALSE)))
 		{
 			Log_Msg_Process(MSG_1301, ImageName, NULL, SessionId, ProcessId);
 		}

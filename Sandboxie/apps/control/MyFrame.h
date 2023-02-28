@@ -119,13 +119,16 @@ class CMyFrame : public CFrameWnd
     afx_msg void OnCmdConfLock();
     afx_msg void OnCmdConfEdit();
     afx_msg void OnCmdConfReload();
-	afx_msg void OnCmdHelpSupport();
+    afx_msg void OnCmdHelpSupport();
+    afx_msg void OnCmdHelpContribution();
     afx_msg void OnCmdHelpTopics();
     afx_msg void OnCmdHelpTutorial();
     afx_msg void OnCmdHelpForum();
-	afx_msg void OnCmdHelpUpdate();
+    afx_msg void OnCmdHelpUpdate();
     afx_msg void OnCmdHelpUpgrade();
     afx_msg void OnCmdHelpMigrate();
+    afx_msg void OnCmdHelpGetCert();
+    afx_msg void OnCmdHelpSetCert();
     afx_msg void OnCmdHelpAbout();
 	//afx_msg LRESULT OnUpdateResult(WPARAM wParam, LPARAM lParam);
     afx_msg void OnCmdTerminateProcess();

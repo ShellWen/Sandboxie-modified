@@ -28,6 +28,7 @@ typedef long NTSTATUS;
 #include "SbieDefs.h"
 
 #include "..\..\Sandboxie\common\win32_ntddk.h"
+#include "..\..\Sandboxie\common\defines.h"
 
 #include "..\..\Sandboxie\core\drv\api_defs.h"
 
@@ -59,7 +60,7 @@ QString ErrorString(qint32 err)
 	return Error;
 }
 
-CTraceEntry::CTraceEntry(quint32 ProcessId, quint32 ThreadId, quint32 Type, const QStringList& LogData)
+CTraceEntry::CTraceEntry(quint64 Timestamp, quint32 ProcessId, quint32 ThreadId, quint32 Type, const QStringList& LogData)
 {
 	m_ProcessId = ProcessId;
 	m_ThreadId = ThreadId;
@@ -68,14 +69,21 @@ CTraceEntry::CTraceEntry(quint32 ProcessId, quint32 ThreadId, quint32 Type, cons
 	m_SubType = LogData.length() > 2 ? LogData.at(2) : QString();
 	m_Type.Flags = Type;
 
-	m_TimeStamp = QDateTime::currentDateTime(); // ms resolution
+	if (m_Type.Type == MONITOR_SYSCALL && !m_SubType.isEmpty()) {
+		m_Message += ", name=" + m_SubType;
+		m_SubType.clear();
+	}
+
+	m_TimeStamp = Timestamp ? Timestamp : QDateTime::currentDateTime().toMSecsSinceEpoch();
 
 	m_BoxPtr = 0;
 
-	static atomic<quint64> uid = 0;
+	static std::atomic<quint64> uid = 0;
 	m_uid = uid.fetch_add(1);
 	
+#ifdef USE_MERGE_TRACE
 	m_Counter = 1;
+#endif
 
 	m_Message = m_Message.replace("\r", "").replace("\n", " ");
 
@@ -86,7 +94,7 @@ CTraceEntry::CTraceEntry(quint32 ProcessId, quint32 ThreadId, quint32 Type, cons
 		if (tmp.length() >= 2)
 		{
 			QString temp = tmp[1].trimmed();
-			int endPos = temp.indexOf(QRegExp("[ \r\n]"));
+			int endPos = temp.indexOf(QRegularExpression("[ \r\n]"));
 			if (endPos != -1)
 				temp.truncate(endPos);
 
@@ -141,9 +149,11 @@ QString CTraceEntry::GetTypeStr() const
 		Type.append(" / " + m_SubType);
 
 	if (m_Type.User)
-		Type.append(" (U)");
+		Type.append(" (U)"); // user mode (sbiedll.dll)
+	//else if (m_Type.Agent)
+	//	Type.append(" (S)"); // system mode (sbiesvc.exe)
 	else
-		Type.append(" (D)");
+		Type.append(" (K)"); // kernel mode (sbiedrv.sys)
 
 	return Type;
 }
@@ -174,8 +184,10 @@ QString CTraceEntry::GetStautsStr() const
 	if (IsTrace())
 		Status.append("Trace ");
 
+#ifdef USE_MERGE_TRACE
 	if (m_Counter > 1)
 		Status.append(QString("(%1) ").arg(m_Counter));
+#endif
 
 	return Status;
 }

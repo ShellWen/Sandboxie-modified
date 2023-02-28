@@ -10,7 +10,7 @@
 //class CTraceFilterProxyModel : public CSortFilterProxyModel
 //{
 //public:
-//	CTraceFilterProxyModel(QObject* parrent = 0) : CSortFilterProxyModel(parrent)
+//	CTraceFilterProxyModel(QObject* parent = 0) : CSortFilterProxyModel(parent)
 //	{
 //		m_FilterPid = 0;
 //		m_FilterTid = 0;
@@ -51,11 +51,15 @@
 CTraceTree::CTraceTree(QWidget* parent) 
 	: CPanelWidget<QTreeViewEx>(parent) 
 {
+	m_bHighLight = false;
+	//m_FilterCol = -1;
+
 	m_pTreeList->setAlternatingRowColors(theConf->GetBool("Options/AltRowColors", false));
 
 	m_pTreeList->setSelectionMode(QAbstractItemView::ExtendedSelection);
+	m_pTreeList->setUniformRowHeights(true); // critical for good performance with huge data sets
 
-	m_pTraceModel = new CTraceModel();
+	m_pTraceModel = new CTraceModel(this);
 	//connect(m_pTraceModel, SIGNAL(NewBranche()), this, SLOT(UpdateFilters()));
 
 	//m_pSortProxy = new CTraceFilterProxyModel(this);
@@ -82,7 +86,10 @@ CTraceTree::CTraceTree(QWidget* parent)
 	//connect(m_pBoxTree, SIGNAL(ColumnChanged(int, bool)), this, SLOT(OnColumnsChanged()));
 
 	//m_pMainLayout->addWidget(CFinder::AddFinder(m_pTreeList, m_pSortProxy));
-	m_pMainLayout->addWidget(CFinder::AddFinder(m_pTreeList, this));
+	CFinder* pFinder;
+	m_pMainLayout->addWidget(CFinder::AddFinder(m_pTreeList, this, CFinder::eHighLightDefault, &pFinder));
+	pFinder->SetModel(m_pTraceModel);
+	//QObject::connect(pFinder, SIGNAL(SelectNext()), this, SLOT(SelectNext()));
 
 
 	QByteArray Columns = theConf->GetBlob("MainWindow/TraceLog_Columns");
@@ -97,6 +104,23 @@ CTraceTree::~CTraceTree()
 	theConf->SetBlob("MainWindow/TraceLog_Columns", GetView()->header()->saveState());
 }
 
+void CTraceTree::SetFilter(const QString& Exp, int iOptions, int Column) 
+{
+	bool bReset = m_FilterExp != Exp || m_bHighLight != ((iOptions & CFinder::eHighLight) != 0);
+
+	//QString ExpStr = ((iOptions & CFinder::eRegExp) == 0) ? Exp : (".*" + QRegularExpression::escape(Exp) + ".*");
+	//QRegularExpression RegExp(ExpStr, (iOptions & CFinder::eCaseSens) != 0 ? QRegularExpression::NoPatternOption : QRegularExpression::CaseInsensitiveOption);
+	//m_FilterExp = RegExp;
+	m_FilterExp = Exp;
+	m_bHighLight = (iOptions & CFinder::eHighLight) != 0;
+	//m_FilterCol = Col;
+
+	if(bReset)
+		emit FilterChanged();
+}
+
+
+
 ////////////////////////////////////////////////////////////////////////////////////////
 // CMonitorList
 
@@ -107,7 +131,7 @@ CMonitorList::CMonitorList(QWidget* parent)
 
 	m_pTreeList->setSelectionMode(QAbstractItemView::ExtendedSelection);
 
-	m_pMonitorModel = new CMonitorModel();
+	m_pMonitorModel = new CMonitorModel(this);
 	//connect(m_pMonitorModel, SIGNAL(NewBranche()), this, SLOT(UpdateFilters()));
 
 	m_pSortProxy = new CSortFilterProxyModel(this);
@@ -116,8 +140,6 @@ CMonitorList::CMonitorList(QWidget* parent)
 	m_pSortProxy->setDynamicSortFilter(true);
 
 	m_pTreeList->setModel(m_pSortProxy);
-	m_pSortProxy->setView(m_pTreeList);
-
 
 	QStyle* pStyle = QStyleFactory::create("windows");
 	m_pTreeList->setStyle(pStyle);
@@ -148,6 +170,7 @@ CMonitorList::~CMonitorList()
 	theConf->SetBlob("MainWindow/Monitor_Columns", GetView()->header()->saveState());
 }
 
+
 ////////////////////////////////////////////////////////////////////////////////////////
 // CTraceView
 
@@ -161,25 +184,27 @@ CTraceView::CTraceView(bool bStandAlone, QWidget* parent) : QWidget(parent)
 	m_LastCount = 0;
 	m_bUpdatePending = false;
 
-	m_bHighLight = false;
-	//m_FilterCol = -1;
 	m_FilterPid = 0;
 	m_FilterTid = 0;
 	m_FilterStatus = 0;
 
 	m_pMainLayout = new QVBoxLayout();
-	m_pMainLayout->setMargin(0);
+	m_pMainLayout->setContentsMargins(0,0,0,0);
 	this->setLayout(m_pMainLayout);
 
 	m_pTraceToolBar = new QToolBar();
 
 	m_pMonitorMode = m_pTraceToolBar->addAction(CSandMan::GetIcon("Monitor"), tr("Monitor mode"), this, SLOT(OnSetMode()));
 	m_pMonitorMode->setCheckable(true);
-	m_pMonitorMode->setChecked(theConf->GetBool("Options/UseMonitorMode"));
+	m_pMonitorMode->setChecked(theConf->GetBool("Options/UseMonitorMode", true));
 
 	m_pTraceTree = m_pTraceToolBar->addAction(CSandMan::GetIcon("Tree"), tr("Show as task tree"), this, SLOT(OnSetTree()));
 	m_pTraceTree->setCheckable(true);
 	m_pTraceTree->setChecked(theConf->GetBool("Options/UseLogTree"));
+
+	m_pObjectTree = m_pTraceToolBar->addAction(CSandMan::GetIcon("Objects"), tr("Show NT Object Tree"), this, SLOT(OnObjTree()));
+	m_pObjectTree->setCheckable(true);
+	m_pObjectTree->setChecked(theConf->GetBool("Options/UseObjectTree"));
 
 	m_pTraceToolBar->addSeparator();
 	m_pTraceToolBar->layout()->setSpacing(3);
@@ -241,7 +266,7 @@ CTraceView::CTraceView(bool bStandAlone, QWidget* parent) : QWidget(parent)
 	m_pLayout = new QStackedLayout(m_pView);
 	
 	m_pTrace = new CTraceTree(this);
-	((CTraceModel*)m_pTrace->GetModel())->SetTree(m_pTraceTree->isChecked());
+	m_pTrace->m_pTraceModel->SetTree(m_pTraceTree->isChecked());
 
 	if (bStandAlone) {
 		QAction* pAction = new QAction(tr("Cleanup Trace Log"));
@@ -252,9 +277,10 @@ CTraceView::CTraceView(bool bStandAlone, QWidget* parent) : QWidget(parent)
 
 	m_pLayout->addWidget(m_pTrace);
 
-	QObject::connect(m_pTrace, SIGNAL(FilterSet(const QRegExp&, bool, int)), this, SLOT(SetFilter(const QRegExp&, bool, int)));
+	QObject::connect(m_pTrace, SIGNAL(FilterChanged()), this, SLOT(OnFilterChanged()));
 
 	m_pMonitor = new CMonitorList(this);
+	m_pMonitor->m_pMonitorModel->SetObjTree(m_pObjectTree->isChecked());
 	m_pLayout->addWidget(m_pMonitor);
 
 	m_pView->setLayout(m_pLayout);
@@ -278,50 +304,6 @@ void CTraceView::timerEvent(QTimerEvent* pEvent)
 	Refresh();
 }
 
-int CTraceView__Filter(const CTraceEntryPtr& pEntry, void* params)
-{
-	CTraceView* This = (CTraceView*)params;
-
-	int Ret = 1;
-
-	if (This->m_pCurrentBox != NULL && This->m_pCurrentBox != pEntry->GetBoxPtr())
-		return 0;
-
-	if (This->m_FilterExp.isValid()) {
-		if (!pEntry->GetName().contains(This->m_FilterExp)
-			&& !pEntry->GetMessage().contains(This->m_FilterExp)
-			&& !pEntry->GetTypeStr().contains(This->m_FilterExp)
-			//&& !pEntry->GetStautsStr().contains(This->m_FilterExp)
-			&& !pEntry->GetProcessName().contains(This->m_FilterExp))
-			Ret = This->m_bHighLight ? 1 : 0;
-		else
-			Ret = This->m_bHighLight ? 2 : 1;
-	}
-
-	if (This->m_FilterPid != 0 && This->m_FilterPid != pEntry->GetProcessId())
-		return 0;
-
-	if (This->m_FilterTid != 0 && This->m_FilterTid != pEntry->GetThreadId())
-		return 0;
-
-	if (!This->m_FilterTypes.isEmpty() && !This->m_FilterTypes.contains(pEntry->GetType()))
-		return 0;
-	
-	if (This->m_FilterStatus != 0) {
-		if (pEntry->IsOpen()) {
-			if(This->m_FilterStatus == 1) return Ret;
-		} else if (pEntry->IsClosed()) {
-			if (This->m_FilterStatus == 2) return Ret;
-		} else if (pEntry->IsTrace()) {
-			if(This->m_FilterStatus == 3) return Ret;
-		} else
-			if(This->m_FilterStatus == 4) return Ret;
-		return 0;
-	}
-
-	return Ret;
-}
-
 void CTraceView::Refresh()
 {
 	QList<CSandBoxPtr>Boxes;
@@ -341,14 +323,17 @@ void CTraceView::Refresh()
 		m_LastCount = 0;
 		m_PidMap.clear();
 
+		quint64 start = GetCurCycle();
 		m_pTrace->m_pTraceModel->Clear();
+		qDebug() << "Clear took" << (GetCurCycle() - start) / 1000000.0 << "s";
+
 		m_pMonitor->m_pMonitorModel->Clear();
 		m_FullRefresh = false;
 	}
 
-	QVector<CTraceEntryPtr> ResourceLog = theAPI->GetTrace();
+	const QVector<CTraceEntryPtr> &ResourceLog = theAPI->GetTrace();
 
-	bool bUpdate = false;
+	bool bUpdateFilters = false;
 
 	int i = 0;
 	if (ResourceLog.count() >= m_LastCount && m_LastCount > 0)
@@ -362,53 +347,90 @@ void CTraceView::Refresh()
 
 	if (i == 0) {
 		m_PidMap.clear();
+		m_TraceList.clear();
 		m_MonitorMap.clear();
 	}
 
+	if (m_LastCount == ResourceLog.count())
+		return;
+
+	//bool bHasFilter = !m_pTrace->m_FilterExp.pattern().isEmpty();
+	bool bHasFilter = !m_pTrace->m_FilterExp.isEmpty();
+
+	quint64 start = GetCurCycle();
 	for (; i < ResourceLog.count(); i++)
 	{
-		CTraceEntryPtr pEntry = ResourceLog.at(i);
+		const CTraceEntryPtr& pEntry = ResourceLog.at(i);
 
 		SProgInfo& Info = m_PidMap[pEntry->GetProcessId()];
 		if (Info.Name.isEmpty()) {
 			Info.Name = pEntry->GetProcessName();
-			bUpdate = true;
+			bUpdateFilters = true;
 		}
 		if (!Info.Threads.contains(pEntry->GetThreadId())) {
 			Info.Threads.insert(pEntry->GetThreadId());
-			bUpdate = true;
+			bUpdateFilters = true;
 		}
 
-		if (bMonitorMode) 
+		if (m_pCurrentBox != NULL && m_pCurrentBox != pEntry->GetBoxPtr())
+			continue;
+
+		if (m_FilterPid != 0 && m_FilterPid != pEntry->GetProcessId())
+			continue;
+
+		if (m_FilterTid != 0 && m_FilterTid != pEntry->GetThreadId())
+			continue;
+
+		if (!m_FilterTypes.isEmpty() && !m_FilterTypes.contains(pEntry->GetType()))
+			continue;
+
+		if (bMonitorMode)
 		{
-			// filter
-			if (m_pCurrentBox != NULL && m_pCurrentBox != pEntry->GetBoxPtr())
-				continue;
-
-			if (m_FilterPid != 0 && m_FilterPid != pEntry->GetProcessId())
-				continue;
-
-			if (m_FilterTid != 0 && m_FilterTid != pEntry->GetThreadId())
-				continue;
-
-			if (!m_FilterTypes.isEmpty() && !m_FilterTypes.contains(pEntry->GetType()))
-				continue;
-			//
-
-			CMonitorEntryPtr &pItem = m_MonitorMap[pEntry->GetName()];
-			if (pItem.data() == NULL)
-				pItem = CMonitorEntryPtr(new CMonitorEntry(pEntry->GetName(), pEntry->GetType()));
+			CMonitorEntryPtr& pItem = m_MonitorMap[pEntry->GetName().toLower()];
+			if (pItem.data() == NULL) {
+				QString Name = pEntry->GetName();
+				//if (Name.left(9).compare("\\REGISTRY", Qt::CaseInsensitive) == 0) {
+				//	int pos = Name.indexOf("\\", 10);
+				//	Name = Name.left(pos).toUpper() + Name.mid(pos);
+				//}
+				pItem = CMonitorEntryPtr(new CMonitorEntry(Name, pEntry->GetType()));
+			}
 
 			pItem->Merge(pEntry);
 		}
+		else
+		{
+			if (bHasFilter && !m_pTrace->m_bHighLight) {
+				if (!pEntry->GetName().contains(m_pTrace->m_FilterExp, Qt::CaseInsensitive)
+					&& !pEntry->GetMessage().contains(m_pTrace->m_FilterExp, Qt::CaseInsensitive)
+					//&& !pEntry->GetTypeStr().contains(m_pTrace->m_FilterExp, Qt::CaseInsensitive) // don't filter on non static strings !!!
+					//&& !pEntry->GetStautsStr().contains(m_pTrace->m_FilterExp, Qt::CaseInsensitive) // don't filter on non static strings !!!
+					&& !pEntry->GetProcessName().contains(m_pTrace->m_FilterExp, Qt::CaseInsensitive))
+						continue;
+			}
+	
+			if (m_FilterStatus != 0) {
+				if (pEntry->IsOpen()) {
+					if (m_FilterStatus != 1) continue;
+				} else if (pEntry->IsClosed()) {
+					if (m_FilterStatus != 2) continue;
+				} else if (pEntry->IsTrace()) {
+					if (m_FilterStatus != 3) continue;
+				} else {
+					if (m_FilterStatus != 4) continue;
+				}
+			}
+
+			m_TraceList.append(pEntry);
+		}
 	}
+	qDebug() << "Filtering took" << (GetCurCycle() - start) / 1000000.0 << "s";
 
 	m_LastCount = ResourceLog.count();
 	if(m_LastCount)
 		m_LastID = ResourceLog.last()->GetUID();
 
-
-	if (bUpdate && !m_bUpdatePending)
+	if (bUpdateFilters && !m_bUpdatePending)
 	{
 		m_bUpdatePending = true;
 		QTimer::singleShot(500, this, SLOT(UpdateFilters()));
@@ -417,20 +439,36 @@ void CTraceView::Refresh()
 
 	if (bMonitorMode)
 	{
-		m_pMonitor->m_pMonitorModel->Sync(m_MonitorMap, this);
+		QList<QModelIndex> NewBranches = m_pMonitor->m_pMonitorModel->Sync(m_MonitorMap, this);
+
+		if (m_pMonitor->m_pMonitorModel->IsObjTree())
+		{
+			QTimer::singleShot(100, this, [this, NewBranches]() {
+				CSortFilterProxyModel* pSortProxy = m_pMonitor->m_pSortProxy;
+				foreach(const QModelIndex& Index, NewBranches) {
+					m_pMonitor->GetTree()->expand(pSortProxy->mapFromSource(Index));
+				}
+			});
+		}
 	}
 	else
 	{
-		QList<QVariant> Added = m_pTrace->m_pTraceModel->Sync(ResourceLog, CTraceView__Filter, this);
+		if (m_pTrace->m_bHighLight)
+			m_pTrace->m_pTraceModel->SetHighLight(m_pTrace->m_FilterExp);
+		else
+			m_pTrace->m_pTraceModel->SetHighLight(QString());
+
+		quint64 start = GetCurCycle();
+		QList<QModelIndex> NewBranches = m_pTrace->m_pTraceModel->Sync(m_TraceList);
+		qDebug() << "Sync took" << (GetCurCycle() - start) / 1000000.0 << "s";
 
 		if (m_pTrace->m_pTraceModel->IsTree())
 		{
-			QTimer::singleShot(100, this, [this, Added]() {
-				//CSortFilterProxyModel* pSortProxy = (CSortFilterProxyModel*)GetModel();
-				foreach(const QVariant ID, Added) {
-					//	m_pTreeList->expand(pSortProxy->mapFromSource(m_pTraceModel->FindIndex(ID)));
-					m_pTrace->GetTree()->expand(m_pTrace->m_pTraceModel->FindIndex(ID));
-				}
+			QTimer::singleShot(100, this, [this, NewBranches]() {
+				quint64 start = GetCurCycle();
+				foreach(const QModelIndex& Index, NewBranches)
+					m_pTrace->GetTree()->expand(Index);
+				qDebug() << "Expand took" << (GetCurCycle() - start) / 1000000.0 << "s";
 			});
 		}
 	}
@@ -445,7 +483,7 @@ void CTraceView::Clear()
 	m_pTraceTid->addItem(tr("[All]"), 0);
 
 	theAPI->ClearTrace();
-	m_pTrace->m_pTraceModel->Clear();
+	m_pTrace->m_pTraceModel->Clear(true);
 	m_pMonitor->m_pMonitorModel->Clear();
 }
 
@@ -460,8 +498,14 @@ void CTraceView::AddAction(QAction* pAction)
 
 void CTraceView::OnSetTree()
 {
-	((CTraceModel*)m_pTrace->GetModel())->SetTree(m_pTraceTree->isChecked());
-	m_pTrace->m_pTraceModel->Clear();
+	m_pTrace->m_pTraceModel->SetTree(m_pTraceTree->isChecked());
+
+	//m_pTrace->m_pTraceModel->Clear();
+
+	m_FullRefresh = true;
+	Refresh();
+	//m_pTrace->GetTree()->expandAll();
+
 	theConf->SetValue("Options/UseLogTree", m_pTraceTree->isChecked());
 }
 
@@ -473,11 +517,26 @@ void CTraceView::OnSetMode()
 		m_pLayout->setCurrentIndex(0); // trace
 
 	m_pTraceTree->setEnabled(!m_pMonitorMode->isChecked());
+	m_pObjectTree->setEnabled(m_pMonitorMode->isChecked());
 	m_pTraceStatus->setEnabled(!m_pMonitorMode->isChecked());
 
 	m_FullRefresh = true;
-
 	Refresh();
+
+	theConf->SetValue("Options/UseMonitorMode", m_pMonitorMode->isChecked());
+}
+
+void CTraceView::OnObjTree()
+{
+	m_pMonitor->m_pMonitorModel->SetObjTree(m_pObjectTree->isChecked());
+
+	//m_pMonitor->m_pMonitorModel->Clear();
+
+	m_FullRefresh = true;
+	Refresh();
+	//m_pTrace->GetTree()->expandAll();
+
+	theConf->SetValue("Options/UseObjectTree", m_pObjectTree->isChecked());
 }
 
 void CTraceView::UpdateFilters()
@@ -487,7 +546,7 @@ void CTraceView::UpdateFilters()
 	quint32 cur_pid = m_pTracePid->currentData().toUInt();
 
 	QMap<quint32, SProgInfo> pids = m_PidMap;
-	foreach(quint32 pid, pids.uniqueKeys()) {
+	foreach(quint32 pid, pids.keys()) {
 		SProgInfo& Info = pids[pid];
 
 		if(m_pTracePid->findData(pid) == -1)
@@ -503,12 +562,8 @@ void CTraceView::UpdateFilters()
 	}
 }
 
-void CTraceView::SetFilter(const QRegExp& Exp, bool bHighLight, int Col)
+void CTraceView::OnFilterChanged()
 {
-	m_FilterExp = Exp;
-	m_bHighLight = bHighLight;
-	//m_FilterCol = Col;
-
 	m_FullRefresh = true;
 }
 
@@ -529,8 +584,8 @@ void CTraceView::OnSetPidFilter()
 
 	//m_pSortProxy->setFilterKeyColumn(m_pSortProxy->filterKeyColumn());
 	m_FullRefresh = true;
-	if(!m_pMonitorMode->isChecked())
-		m_pTrace->GetTree()->expandAll();
+	//if(!m_pMonitorMode->isChecked())
+	//	m_pTrace->GetTree()->expandAll();
 }
 
 void CTraceView::OnSetTidFilter()
@@ -540,8 +595,8 @@ void CTraceView::OnSetTidFilter()
 
 	//m_pSortProxy->setFilterKeyColumn(m_pSortProxy->filterKeyColumn());
 	m_FullRefresh = true;
-	if(!m_pMonitorMode->isChecked())
-		m_pTrace->GetTree()->expandAll();
+	//if(!m_pMonitorMode->isChecked())
+	//	m_pTrace->GetTree()->expandAll();
 }
 
 
@@ -557,8 +612,8 @@ void CTraceView::OnSetFilter()
 	m_FilterStatus = m_pTraceStatus->currentData().toUInt();
 
 	m_FullRefresh = true;
-	if(!m_pMonitorMode->isChecked())
-		m_pTrace->GetTree()->expandAll();
+	//if(!m_pMonitorMode->isChecked())
+	//	m_pTrace->GetTree()->expandAll();
 }
 
 
@@ -582,17 +637,13 @@ void CTraceView::SaveToFile()
 	}
 	else
 	{
-		QVector<CTraceEntryPtr> ResourceLog = theAPI->GetTrace();
+		const QVector<CTraceEntryPtr> &ResourceLog = theAPI->GetTrace();
 		for (int i = 0; i < ResourceLog.count(); i++)
 		{
-			CTraceEntryPtr pEntry = ResourceLog.at(i);
-
-			//int iFilter = CTraceView__Filter(pEntry, this);
-			//if (!iFilter)
-			//	continue;
+			const CTraceEntryPtr& pEntry = ResourceLog.at(i);
 
 			QStringList Line;
-			Line.append(pEntry->GetTimeStamp().toString("hh:mm:ss.zzz"));
+			Line.append(QDateTime::fromMSecsSinceEpoch(pEntry->GetTimeStamp()).toString("hh:mm:ss.zzz"));
 			QString Name = pEntry->GetProcessName();
 			Line.append(Name.isEmpty() ? tr("Unknown") : Name);
 			Line.append(QString("%1").arg(pEntry->GetProcessId()));
@@ -633,7 +684,7 @@ CTraceWindow::CTraceWindow(QWidget *parent)
 	this->setWindowFlag(Qt::WindowStaysOnTopHint, bAlwaysOnTop);
 
 	QGridLayout* pLayout = new QGridLayout();
-	pLayout->setMargin(3);
+	pLayout->setContentsMargins(3,3,3,3);
 	pLayout->addWidget(new CTraceView(true, this), 0, 0);
 	this->setLayout(pLayout);
 
@@ -652,3 +703,4 @@ void CTraceWindow::closeEvent(QCloseEvent *e)
 	emit Closed();
 	this->deleteLater();
 }
+

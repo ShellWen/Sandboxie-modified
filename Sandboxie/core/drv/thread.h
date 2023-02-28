@@ -93,10 +93,16 @@ NTSTATUS Thread_CheckTokenObject(
     PROCESS *proc, void *Object, ACCESS_MASK GrantedAccess);
 
 THREAD *Thread_GetByThreadId(PROCESS *proc, HANDLE tid);
+THREAD *Thread_GetOrCreate(PROCESS *proc, HANDLE tid, BOOLEAN create);
 
 NTSTATUS Thread_CheckObject_Common(
     PROCESS *proc, PEPROCESS ProcessObject,
     ACCESS_MASK GrantedAccess, BOOLEAN EntireProcess,
+    BOOLEAN ExplicitAccess);
+
+ACCESS_MASK Thread_CheckObject_CommonEx(
+    HANDLE pid, PEPROCESS ProcessObject,
+    ACCESS_MASK DesiredAccess, BOOLEAN EntireProcess,
     BOOLEAN ExplicitAccess);
 
 //---------------------------------------------------------------------------

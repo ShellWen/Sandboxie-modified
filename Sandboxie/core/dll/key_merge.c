@@ -461,7 +461,7 @@ _FX NTSTATUS Key_OpenForMerge(
         //
         // if rule specificity is enabled we may not have access to this true path
         // but still have access to some sub paths, in this case instead of listing the
-        // true directory we parse the rule list and construst a cached dummy directory
+        // true directory we parse the rule list and construct a cached dummy directory
         //
 
         if (use_rule_specificity)
@@ -717,6 +717,7 @@ _FX NTSTATUS Key_MergeCacheDummys(KEY_MERGE *merge, const WCHAR *TruePath)
 {
     ULONG len;
     KEY_MERGE_SUBKEY *subkey, *subkey2;
+    NTSTATUS status;
 
     //
     // create a dummy key
@@ -740,49 +741,73 @@ _FX NTSTATUS Key_MergeCacheDummys(KEY_MERGE *merge, const WCHAR *TruePath)
             if (_wcsnicmp(TruePath, patstr, TruePathLen) == 0 && patstr[TruePathLen] == L'\\') {
 
                 const WCHAR* ptr = &patstr[TruePathLen + 1];
-                const WCHAR* end = wcschr(ptr, L'\\');
+                WCHAR* end = wcschr(ptr, L'\\');
                 if(end == NULL) end = wcschr(ptr, L'*');
                 if(end == NULL) end = wcschr(ptr, L'\0');
-                ULONG name_len = (ULONG)(end - ptr) * sizeof(WCHAR);
+                ULONG name_len = (ULONG)(end - ptr);
+
+                //
+                // check if the true path exists
+                //
+
+                WCHAR* FakePath = Dll_AllocTemp(TruePathLen * sizeof(WCHAR) + 1 + name_len * sizeof(WCHAR) + 10);
+
+                wmemcpy(FakePath, TruePath, TruePathLen * sizeof(WCHAR));
+                wcscat(FakePath, L"\\");
+                end = wcschr(FakePath, L'\0');
+                wmemcpy(end, ptr, name_len * sizeof(WCHAR));
+                end[name_len] = L'\0';
+
+                HANDLE KeyHandle;
+                status = SbieApi_OpenKey(&KeyHandle, FakePath);
+
+                Dll_Free(FakePath);
 
                 //
                 // create the subkey
                 //
 
-                len = sizeof(KEY_MERGE_SUBKEY) + name_len + sizeof(WCHAR);
-                subkey = Dll_Alloc(len);
+                if (NT_SUCCESS(status)) {
 
-                subkey->name_len = name_len;
-                memcpy(subkey->name, ptr, subkey->name_len);
-                subkey->name[subkey->name_len / sizeof(WCHAR)] = L'\0';
+                    File_NtCloseImpl(KeyHandle);
 
-                subkey->LastWriteTime.QuadPart = 0;
+                    name_len *= sizeof(WCHAR);
 
-                subkey->TitleOrClass = FALSE;
+                    len = sizeof(KEY_MERGE_SUBKEY) + name_len + sizeof(WCHAR);
+                    subkey = Dll_Alloc(len);
 
-                //
-                // find where to insert it.  if the new key is already larger than
-                // our last key in the sorted list, instead directly at the end
-                //
+                    subkey->name_len = name_len;
+                    memcpy(subkey->name, ptr, subkey->name_len);
+                    subkey->name[subkey->name_len / sizeof(WCHAR)] = L'\0';
 
-                subkey2 = List_Tail(&merge->subkeys);
-                if (subkey2 && _wcsicmp(subkey2->name, subkey->name) < 0)
-                    subkey2 = NULL;
-                else {
-                    subkey2 = List_Head(&merge->subkeys);
-                    while (subkey2) {
-                        int cmp = _wcsicmp(subkey2->name, subkey->name);
-                        if (cmp == 0) goto next;
-                        if (cmp > 0)
-                            break;
-                        subkey2 = List_Next(subkey2);
+                    subkey->LastWriteTime.QuadPart = 0; // todo: fix-me
+
+                    subkey->TitleOrClass = FALSE;
+
+                    //
+                    // find where to insert it.  if the new key is already larger than
+                    // our last key in the sorted list, instead directly at the end
+                    //
+
+                    subkey2 = List_Tail(&merge->subkeys);
+                    if (subkey2 && _wcsicmp(subkey2->name, subkey->name) < 0)
+                        subkey2 = NULL;
+                    else {
+                        subkey2 = List_Head(&merge->subkeys);
+                        while (subkey2) {
+                            int cmp = _wcsicmp(subkey2->name, subkey->name);
+                            if (cmp == 0) goto next;
+                            if (cmp > 0)
+                                break;
+                            subkey2 = List_Next(subkey2);
+                        }
                     }
-                }
 
-                if (subkey2)
-                    List_Insert_Before(&merge->subkeys, subkey2, subkey);
-                else
-                    List_Insert_After(&merge->subkeys, NULL, subkey);
+                    if (subkey2)
+                        List_Insert_Before(&merge->subkeys, subkey2, subkey);
+                    else
+                        List_Insert_After(&merge->subkeys, NULL, subkey);
+                }
             }
 
         next:

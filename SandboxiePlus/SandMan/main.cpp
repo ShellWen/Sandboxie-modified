@@ -16,7 +16,7 @@ QString g_PendingMessage;
 
 int main(int argc, char *argv[])
 {
-	qsrand(QTime::currentTime().msec());
+	srand(QDateTime::currentDateTimeUtc().toSecsSinceEpoch());
 
 	wchar_t szPath[MAX_PATH];
 	GetModuleFileNameW(NULL, szPath, ARRAYSIZE(szPath));
@@ -124,16 +124,20 @@ int main(int argc, char *argv[])
 	if (!g_PendingMessage.isEmpty()) {
 		if(app.sendMessage(g_PendingMessage))
 			return 0;
-		app.disableSingleApp(); // we start to do one job and exit, don't interfear with starting a regular instance
+		app.disableSingleApp(); // we start to do one job and exit, don't interfere with starting a regular instance
 	}
-	else if (app.sendMessage("ShowWnd"))
-		return 0;
+	else {
+		if (app.arguments().contains("-autorun") && app.isRunning())
+			return 0;
+		if (app.sendMessage("ShowWnd"))
+			return 0;
+	}
 
 	//QThreadPool::globalInstance()->setMaxThreadCount(theConf->GetInt("Options/MaxThreadPool", 10));
 
 	CSandMan* pWnd = new CSandMan();
 
-	QObject::connect(&app, SIGNAL(messageReceived(const QString&)), pWnd, SLOT(OnMessage(const QString&)));
+	QObject::connect(&app, SIGNAL(messageReceived(const QString&)), pWnd, SLOT(OnMessage(const QString&)), Qt::QueuedConnection);
 
 	int ret =  app.exec();
 

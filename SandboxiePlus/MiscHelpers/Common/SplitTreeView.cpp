@@ -6,7 +6,7 @@ CSplitTreeView::CSplitTreeView(QAbstractItemModel* pModel, QWidget *parent) : QW
 	m_pModel = pModel;
 
 	m_pMainLayout = new QHBoxLayout();
-	m_pMainLayout->setMargin(0);
+	m_pMainLayout->setContentsMargins(0,0,0,0);
 	this->setLayout(m_pMainLayout);
 
 
@@ -23,7 +23,7 @@ CSplitTreeView::CSplitTreeView(QAbstractItemModel* pModel, QWidget *parent) : QW
 	// Tree
 	m_pTree = new QTreeView();
 
-	m_pOneModel = new COneColumnModel();
+	m_pOneModel = new COneColumnModel(this);
 	m_pOneModel->setSourceModel(m_pModel);
 	m_pTree->setModel(m_pOneModel);
 	//m_pTree->setModel(m_pSortProxy);
@@ -49,7 +49,7 @@ CSplitTreeView::CSplitTreeView(QAbstractItemModel* pModel, QWidget *parent) : QW
 
 
 	// List
-	// Note: It would be convinient to use QTreeViewEx here but qt does not scale well when there are too many columns
+	// Note: It would be convenient to use QTreeViewEx here but qt does not scale well when there are too many columns
 	//			hence we will add and remove columns at the model level directly.
 	//			This way we can get out operational CPU usage to be quite comparable with TaskInfo na other advanced task managers
 	//		 Plus there are to many columns to cram them into one simple context menu :-)
@@ -77,7 +77,7 @@ CSplitTreeView::CSplitTreeView(QAbstractItemModel* pModel, QWidget *parent) : QW
 	connect(m_pSplitter, SIGNAL(splitterMoved(int,int)), this, SLOT(OnSplitterMoved(int,int)));
 
 	// Link selections
-	//m_pTree->setSelectionModel(m_pList->selectionModel()); // this works only when booth views share the same data model
+	//m_pTree->setSelectionModel(m_pList->selectionModel()); // this works only when both views share the same data model
 
 	connect(m_pTree->selectionModel(), SIGNAL(selectionChanged(QItemSelection,QItemSelection)), this, SLOT(OnTreeSelectionChanged(QItemSelection,QItemSelection)));
 	connect(m_pList->selectionModel(), SIGNAL(selectionChanged(QItemSelection,QItemSelection)), this, SLOT(OnListSelectionChanged(QItemSelection,QItemSelection)));

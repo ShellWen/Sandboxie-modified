@@ -56,7 +56,7 @@ CRecoveryWindow::CRecoveryWindow(const CSandBoxPtr& pBox, bool bImmediate, QWidg
 	m_LastTargetIndex = 0;
 	m_bTargetsChanged = false;
 	m_bReloadPending = false;
-	m_DeleteShapshots = false;
+	m_DeleteSnapshots = false;
 
 	QStyle* pStyle = QStyleFactory::create("windows");
 	ui.treeFiles->setStyle(pStyle);
@@ -65,7 +65,7 @@ CRecoveryWindow::CRecoveryWindow(const CSandBoxPtr& pBox, bool bImmediate, QWidg
 
 	ui.btnDeleteAll->setVisible(false);
 
-	m_pFileModel = new CSimpleTreeModel();
+	m_pFileModel = new CSimpleTreeModel(this);
 	m_pFileModel->SetUseIcons(true);
 	m_pFileModel->AddColumn(tr("File Name"), "FileName");
 	m_pFileModel->AddColumn(tr("File Size"), "FileSize");
@@ -79,13 +79,14 @@ CRecoveryWindow::CRecoveryWindow(const CSandBoxPtr& pBox, bool bImmediate, QWidg
 	//ui.treeFiles->setItemDelegate(theGUI->GetItemDelegate());
 
 	ui.treeFiles->setModel(m_pSortProxy);
-	((CSortFilterProxyModel*)m_pSortProxy)->setView(ui.treeFiles);
 
 	ui.treeFiles->setSelectionMode(QAbstractItemView::ExtendedSelection);
 	ui.treeFiles->setSortingEnabled(true);
 	//ui.treeFiles->setUniformRowHeights(true);
 
-	ui.gridLayout->addWidget(new CFinder(m_pSortProxy, this, true), 3, 0, 1, 5);
+	CFinder* pFinder = new CFinder(m_pSortProxy, this);
+	ui.gridLayout->addWidget(pFinder, 3, 0, 1, 5);
+	pFinder->SetTree(ui.treeFiles);
 	ui.finder->deleteLater(); // remove place holder
 
 	//connect(ui.treeFiles, SIGNAL(clicked(const QModelIndex&)), this, SLOT(UpdateSnapshot(const QModelIndex&)));
@@ -161,6 +162,11 @@ int	CRecoveryWindow::exec()
 	ui.btnDeleteAll->setVisible(true);
 	SafeShow(this);
 	return QDialog::exec();
+}
+
+bool CRecoveryWindow::IsDeleteDialog() const
+{
+	return ui.btnDeleteAll->isVisible();
 }
 
 void CRecoveryWindow::closeEvent(QCloseEvent *e)
@@ -253,7 +259,7 @@ void CRecoveryWindow::OnDeleteAll()
 
 void CRecoveryWindow::OnDeleteEverything()
 {
-	m_DeleteShapshots = true;
+	m_DeleteSnapshots = true;
 	OnDeleteAll();
 }
 
@@ -327,7 +333,68 @@ int CRecoveryWindow::FindFiles()
 
 	m_pFileModel->Sync(m_FileMap);
 	ui.treeFiles->expandAll();
+	
+	if(m_bImmediate)
+		SelectFiles();
+
 	return Count;
+}
+
+void CRecoveryWindow::SelectFiles()
+{
+	//QModelIndex Index = m_pFileModel->index(0, 0);
+
+	QModelIndex Index;
+	for (int i = 0; i < m_pFileModel->rowCount(); ++i)
+	{
+		QModelIndex ModelIndex = m_pFileModel->index(i, 0);
+		QVariant ID = m_pFileModel->GetItemID(ModelIndex);
+		//QVariant ID = m_pFileModel->GetItemID(Index);
+
+		QVariantMap File = m_FileMap.value(ID);
+		if (File.isEmpty())
+			continue;
+
+		if (File["IsDir"].toBool() == false)
+		{
+			Index = ModelIndex;
+			goto SelectFile;
+		}
+		else
+		{
+			QList<QModelIndex> Folders;
+			Folders.append(ModelIndex);
+			do
+			{
+				QModelIndex CurIndex = Folders.takeFirst();
+				for (int i = 0; i < m_pFileModel->rowCount(CurIndex); i++)
+				{
+					QModelIndex ChildIndex = m_pFileModel->index(i, 0, CurIndex);
+
+					QVariant ChildID = m_pFileModel->GetItemID(ChildIndex);
+					QVariantMap File = m_FileMap.value(ChildID);
+					if (File.isEmpty())
+						continue;
+
+					if (File["IsDir"].toBool() == false) 
+					{
+						Index = ChildIndex;
+						goto SelectFile;
+					}
+					else
+						Folders.append(ChildIndex);
+				}
+			} while (!Folders.isEmpty());
+		}
+	}
+
+SelectFile:
+	if (Index.isValid()) {
+		QModelIndex ModelIndex = m_pSortProxy->mapFromSource(Index);
+		ui.treeFiles->selectionModel()->setCurrentIndex(ModelIndex, QItemSelectionModel::SelectCurrent);
+		ui.treeFiles->setCurrentIndex(ModelIndex);
+		ui.treeFiles->setFocus();
+	}
 }
 
 int CRecoveryWindow::FindFiles(const QString& Folder)
@@ -529,7 +596,7 @@ void CRecoveryWindow::OnCloseUntil()
 void CRecoveryWindow::OnAutoDisable()
 {
 	m_pBox.objectCast<CSandBoxPlus>()->SetSuspendRecovery();
-	m_pBox->SetBool("AutoRecover", false);
+	m_pBox->SetBoolSafe("AutoRecover", false);
 	close();
 }
 

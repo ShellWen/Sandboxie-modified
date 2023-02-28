@@ -77,6 +77,9 @@ const  ULONG                 tzuk = 'xobs';
 
        SYSTEM_INFO           _SystemInfo;
 
+#ifdef _M_ARM64
+       BOOLEAN               DisableCHPE = FALSE;
+#endif
 
 //---------------------------------------------------------------------------
 // WinMain
@@ -159,6 +162,10 @@ void WINAPI ServiceMain(DWORD argc, WCHAR *argv[])
     if (! SetServiceStatus(ServiceStatusHandle, &ServiceStatus))
         status = GetLastError();
 
+    /*while (! IsDebuggerPresent()) {
+        Sleep(1000);
+    } __debugbreak();*/
+
     if (status == 0)
         status = InitializeEventLog();
 
@@ -168,8 +175,11 @@ void WINAPI ServiceMain(DWORD argc, WCHAR *argv[])
             status = 0x1234;
     }
 
-    if (status == 0)
+    if (status == 0) {
         status = InitializePipe();
+
+		SbieDll_DisableCHPE();
+    }
 
     if (status == 0) {
 
@@ -244,6 +254,28 @@ DWORD WINAPI ServiceHandlerEx(
     {
         PipeServer *pipeServer = PipeServer::GetPipeServer();
         delete pipeServer;
+
+#ifdef _M_ARM64
+        if (DisableCHPE) {
+            HKEY hkey = NULL;
+            LSTATUS rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Wow64\\x86\\xtajit",
+                0, NULL, 0, KEY_ALL_ACCESS, NULL, &hkey, NULL);
+            if (rc == 0)
+            {
+                DWORD value;
+                DWORD size = sizeof(value);
+                rc = RegQueryValueEx(hkey, L"LoadCHPEBinaries_old", NULL, NULL, (BYTE*)&value, &size);
+                if (rc == 0) {
+                    RegSetValueEx(hkey, L"LoadCHPEBinaries", NULL, REG_DWORD, (BYTE*)&value, size);
+                    RegDeleteValue(hkey, L"LoadCHPEBinaries_old");
+                }
+                else
+                    RegDeleteValue(hkey, L"LoadCHPEBinaries");
+
+                RegCloseKey(hkey);
+            }
+        }
+#endif
 
         ServiceStatus.dwCurrentState        = SERVICE_STOPPED;
         ServiceStatus.dwCheckPoint          = 0;
@@ -481,20 +513,21 @@ finish:
 //---------------------------------------------------------------------------
 
 
-bool CheckDropRights(const WCHAR *BoxName)
+bool CheckDropRights(const WCHAR *BoxName, const WCHAR *ExeName)
 {
-    if (SbieApi_QueryConfBool(BoxName, L"NoSecurityIsolation", FALSE))
-        return false; // if we are not swapping the token we can not drop admin rights so keep this consistent
+    // Allow setting of DropAdminRights to suppress UAC prompts / elevation from the sandboxed realm
+    //if (SbieApi_QueryConfBool(BoxName, L"NoSecurityIsolation", FALSE))
+    //    return false; // if we are not swapping the token we can not drop admin rights so keep this consistent
     if (SbieApi_QueryConfBool(BoxName, L"UseSecurityMode", FALSE))
         return true;
-    if (SbieApi_QueryConfBool(BoxName, L"DropAdminRights", FALSE))
+    if (SbieDll_GetSettingsForName_bool(BoxName, ExeName, L"DropAdminRights", FALSE))
         return true;
     return false;
 }
 
 
 //---------------------------------------------------------------------------
-// CheckDropRights
+// IsProcessWoW64
 //---------------------------------------------------------------------------
 
 

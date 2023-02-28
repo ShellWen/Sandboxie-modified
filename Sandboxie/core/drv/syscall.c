@@ -31,6 +31,7 @@
 #include "session.h"
 #include "conf.h"
 #include "common/pattern.h"
+#include "core/low/lowdata.h"
 
 
 //---------------------------------------------------------------------------
@@ -204,7 +205,7 @@ _FX BOOLEAN Syscall_Init_List(void)
     List_Init(&Syscall_List);
 
     //
-    // preapre the approve and disabled lists
+    // prepare the approve and disabled lists
     //
 
     LIST disabled_hooks;
@@ -428,10 +429,7 @@ _FX BOOLEAN Syscall_Init_Table(void)
 
 _FX BOOLEAN Syscall_Init_ServiceData(void)
 {
-    UCHAR *NtdllExports[] = {
-        "DelayExecution", "DeviceIoControlFile", "FlushInstructionCache",
-        "ProtectVirtualMemory"
-    };
+    UCHAR *NtdllExports[] = NATIVE_FUNCTION_NAMES;
     SYSCALL_ENTRY *entry;
     DLL_ENTRY *dll;
     UCHAR *ntdll_code;
@@ -441,7 +439,7 @@ _FX BOOLEAN Syscall_Init_ServiceData(void)
     // allocate some space to save code from ntdll
     //
 
-    Syscall_NtdllSavedCode = Mem_AllocEx(Driver_Pool, (32 * 4), TRUE);
+    Syscall_NtdllSavedCode = Mem_AllocEx(Driver_Pool, (NATIVE_FUNCTION_SIZE * NATIVE_FUNCTION_COUNT), TRUE);
     if (! Syscall_NtdllSavedCode)
         return FALSE;
 
@@ -455,9 +453,9 @@ _FX BOOLEAN Syscall_Init_ServiceData(void)
     // (see core/svc/DriverAssistInject.cpp and core/low/lowdata.h)
     //
 
-    for (i = 0; i < 4; ++i) {
+    for (i = 0; i < NATIVE_FUNCTION_COUNT; ++i) {
 
-        entry = Syscall_GetByName(NtdllExports[i]);
+        entry = Syscall_GetByName(NtdllExports[i] + 2); // +2 skip Nt prefix
         if (! entry)
             return FALSE;
 
@@ -467,7 +465,7 @@ _FX BOOLEAN Syscall_Init_ServiceData(void)
             return FALSE;
         }
 
-        memcpy(Syscall_NtdllSavedCode + (i * 32), ntdll_code, 32);
+        memcpy(Syscall_NtdllSavedCode + (i * NATIVE_FUNCTION_SIZE), ntdll_code, NATIVE_FUNCTION_SIZE);
     }
 
     //
@@ -702,10 +700,17 @@ _FX NTSTATUS Syscall_Api_Invoke(PROCESS *proc, ULONG64 *parms)
 
                 pTrapFrame = (PKTRAP_FRAME) *(ULONG_PTR*)((UCHAR*)pThread + g_TrapFrameOffset);
                 if (pTrapFrame) {
+#ifdef _M_ARM64
+                    //ret = pTrapFrame->Pc;
+                    //UserStack = pTrapFrame->Sp;
+                    //pTrapFrame->Sp = pTrapFrame->Fp;
+                    //pTrapFrame->Pc = pTrapFrame->X27;
+#else
                     ret = pTrapFrame->Rip;
                     UserStack = pTrapFrame->Rsp;
                     pTrapFrame->Rsp = pTrapFrame->Rbp; //*pRbp;
                     pTrapFrame->Rip = pTrapFrame->Rbx; //*pRbx;
+#endif
                 }
             }
             else
@@ -816,21 +821,30 @@ _FX NTSTATUS Syscall_Api_Invoke(PROCESS *proc, ULONG64 *parms)
 
         if (!traced && ((proc->call_trace & TRACE_ALLOW) || ((status != STATUS_SUCCESS) && (proc->call_trace & TRACE_DENY))))
         {
-            WCHAR trace_str[128];
-            RtlStringCbPrintfW(trace_str, sizeof(trace_str), L"%.*S, status = 0x%X", //59 chars + entry->name
-                max(strlen(entry->name), 64), entry->name,
-                status);
-            const WCHAR* strings[3] = { trace_str, trace_str + (entry->name_len + 2), NULL };
-            ULONG lengths[3] = {entry->name_len, wcslen(trace_str) - (entry->name_len + 2), 0 };
-            Session_MonitorPutEx(MONITOR_SYSCALL | (entry->approved ? MONITOR_OPEN : MONITOR_TRACE), 
-                strings, lengths, PsGetCurrentProcessId(), PsGetCurrentThreadId());
+            // Suppress Sbie's own calls to DeviceIoControlFile
+            if ((strcmp(entry->name, "DeviceIoControlFile") != 0) || user_args[5] != API_SBIEDRV_CTLCODE)
+            {
+                WCHAR trace_str[128];
+                RtlStringCbPrintfW(trace_str, sizeof(trace_str), L"%.*S, status = 0x%X", //59 chars + entry->name
+                    max(strlen(entry->name), 64), entry->name,
+                    status);
+                const WCHAR* strings[3] = { trace_str, trace_str + (entry->name_len + 2), NULL };
+                ULONG lengths[3] = { entry->name_len, wcslen(trace_str) - (entry->name_len + 2), 0 };
+                Session_MonitorPutEx(MONITOR_SYSCALL | (entry->approved ? MONITOR_OPEN : MONITOR_TRACE),
+                    strings, lengths, PsGetCurrentProcessId(), PsGetCurrentThreadId());
+            }
         }
 
 #ifdef _WIN64
         if (g_TrapFrameOffset) {
             if (pTrapFrame) {
+#ifdef _M_ARM64
+                //pTrapFrame->Pc = ret;
+                //pTrapFrame->Sp = UserStack;
+#else
                 pTrapFrame->Rip = ret;
                 pTrapFrame->Rsp = UserStack;
+#endif
             }
         }
 #endif
@@ -918,7 +932,7 @@ _FX NTSTATUS Syscall_Api_Query(PROCESS *proc, ULONG64 *parms)
 
     buf_len = sizeof(ULONG)         // size of buffer
             + sizeof(ULONG)         // offset to extra data (for SbieSvc)
-            + (32 * 4)              // saved code from ntdll
+            + (NATIVE_FUNCTION_SIZE * NATIVE_FUNCTION_COUNT) // saved code from ntdll
             + List_Count(&Syscall_List) * ((sizeof(ULONG) * 2) + (add_names ? 64 : 0))
             + sizeof(ULONG) * 2     // final terminator entry
             ;
@@ -940,8 +954,8 @@ _FX NTSTATUS Syscall_Api_Query(PROCESS *proc, ULONG64 *parms)
     *ptr = 0;           // placeholder for offset to extra offset
     ++ptr;
 
-    memcpy(ptr, Syscall_NtdllSavedCode, (32 * 4));
-    ptr += (32 * 4) / sizeof(ULONG);
+    memcpy(ptr, Syscall_NtdllSavedCode, (NATIVE_FUNCTION_SIZE * NATIVE_FUNCTION_COUNT));
+    ptr += (NATIVE_FUNCTION_SIZE * NATIVE_FUNCTION_COUNT) / sizeof(ULONG);
 
     //
     // store service index number and (only on 32-bit Windows) also

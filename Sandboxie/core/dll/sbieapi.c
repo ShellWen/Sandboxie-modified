@@ -208,18 +208,34 @@ _FX LONG SbieApi_Call(ULONG api_code, LONG arg_num, ...)
 _FX LONG SbieApi_GetVersion(
     WCHAR *out_version)     // WCHAR [16]
 {
+    return SbieApi_GetVersionEx(out_version, NULL);
+}
+
+
+//---------------------------------------------------------------------------
+// SbieApi_GetVersionEx
+//---------------------------------------------------------------------------
+
+
+_FX LONG SbieApi_GetVersionEx(
+    WCHAR* version_string,  // WCHAR [16]
+    ULONG* abi_version)
+{
     NTSTATUS status;
     __declspec(align(8)) ULONG64 parms[API_NUM_ARGS];
     API_GET_VERSION_ARGS *args = (API_GET_VERSION_ARGS *)parms;
 
     memzero(parms, sizeof(parms));
     args->func_code = API_GET_VERSION;
-    args->string.val64 = (ULONG_PTR)out_version;
+    args->string.val = version_string;
+    args->abi_ver.val = abi_version;
 
     status = SbieApi_Ioctl(parms);
 
-    if (! NT_SUCCESS(status))
-        wcscpy(out_version, L"unknown");
+    if (! NT_SUCCESS(status)){
+        if (version_string) wcscpy(version_string, L"unknown");
+        if (abi_version) *abi_version = 0;
+    }
 
     return status;
 }
@@ -385,7 +401,7 @@ _FX LONG SbieApi_LogMsgEx(
 	API_LOG_MESSAGE_ARGS *args = (API_LOG_MESSAGE_ARGS *)parms;
 
 	//
-	// the msg_data can contain multiple strings separated by L'\0' charakters
+	// the msg_data can contain multiple strings separated by L'\0' characters
 	//
 
 	msgtext.Buffer = (ULONG_PTR)msg_data;
@@ -1380,6 +1396,36 @@ _FX BOOLEAN SbieApi_QueryConfBool(
 
 
 //---------------------------------------------------------------------------
+// SbieApi_QueryConfBool
+//---------------------------------------------------------------------------
+
+
+_FX ULONG SbieApi_QueryConfNumber(
+    const WCHAR *section_name,      // WCHAR [66]
+    const WCHAR *setting_name,      // WCHAR [66]
+    ULONG def)
+{
+    WCHAR value[32];
+    *value = L'\0';
+    if (!NT_SUCCESS(SbieApi_QueryConfAsIs(
+                    section_name, setting_name, 0, value, sizeof(value)))
+        || *value == L'\0') // empty string
+        return def;
+    ULONG num = _wtoi(value);
+    if (num == 0) {
+        WCHAR* ptr = value;
+        //if(*ptr == L'-')
+        //    ptr++;
+        while (*ptr == L'0')
+            ptr++;
+        if(*ptr == L'\0')
+            return def;
+    }
+    return num;
+}
+
+
+//---------------------------------------------------------------------------
 // SbieApi_EnumBoxes
 //---------------------------------------------------------------------------
 
@@ -1516,19 +1562,7 @@ _FX LONG SbieApi_MonitorPut2(
     const WCHAR *Name,
     BOOLEAN bCheckObjectExists)
 {
-    NTSTATUS status;
-    __declspec(align(8)) ULONG64 parms[API_NUM_ARGS];
-    API_MONITOR_PUT2_ARGS *args = (API_MONITOR_PUT2_ARGS *)parms;
-
-    memset(parms, 0, sizeof(parms));
-    args->func_code                 = API_MONITOR_PUT2;
-    args->log_type.val              = Type;
-    args->log_len.val64             = wcslen(Name) * sizeof(WCHAR);
-    args->log_ptr.val64             = (ULONG64)(ULONG_PTR)Name;
-    args->check_object_exists.val64 = bCheckObjectExists;
-    status = SbieApi_Ioctl(parms);
-
-    return status;
+    return SbieApi_MonitorPut2Ex(Type, wcslen(Name), Name, bCheckObjectExists, FALSE);
 }
 
 
@@ -1541,6 +1575,22 @@ _FX LONG SbieApi_MonitorPutMsg(
     ULONG Type,
     const WCHAR* Message)
 {
+    return SbieApi_MonitorPut2Ex(Type, wcslen(Message), Message, FALSE, TRUE);
+}
+
+
+//---------------------------------------------------------------------------
+// SbieApi_MonitorPut2Ex
+//---------------------------------------------------------------------------
+
+
+_FX LONG SbieApi_MonitorPut2Ex(
+    ULONG Type,
+    ULONG NameLen,
+    const WCHAR *Name,
+    BOOLEAN bCheckObjectExists,
+    BOOLEAN bIsMessage)
+{
     NTSTATUS status;
     __declspec(align(8)) ULONG64 parms[API_NUM_ARGS];
     API_MONITOR_PUT2_ARGS *args = (API_MONITOR_PUT2_ARGS *)parms;
@@ -1548,10 +1598,10 @@ _FX LONG SbieApi_MonitorPutMsg(
     memset(parms, 0, sizeof(parms));
     args->func_code                 = API_MONITOR_PUT2;
     args->log_type.val              = Type;
-    args->log_len.val64             = wcslen(Message) * sizeof(WCHAR);
-    args->log_ptr.val64             = (ULONG64)(ULONG_PTR)Message;
-    args->check_object_exists.val64 = FALSE;
-    args->is_message.val64          = TRUE;
+    args->log_len.val64             = NameLen * sizeof(WCHAR);
+    args->log_ptr.val64             = (ULONG64)(ULONG_PTR)Name;
+    args->check_object_exists.val64 = bCheckObjectExists;
+    args->is_message.val64          = bIsMessage;
     status = SbieApi_Ioctl(parms);
 
     return status;

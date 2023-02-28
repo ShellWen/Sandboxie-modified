@@ -12,6 +12,7 @@ typedef long NTSTATUS;
 #include "SbieDefs.h"
 
 #include "..\..\Sandboxie\common\win32_ntddk.h"
+#include "..\..\Sandboxie\common\defines.h"
 
 #include "SbieAPI.h"
 
@@ -73,7 +74,7 @@ SB_RESULT(void*) CSbieUtils::Start(EComponent Component)
 
 void CSbieUtils::Start(EComponent Component, QStringList& Ops)
 {
-	// Note: Service aways starts the driver
+	// Note: Service always starts the driver
 	if ((Component & eService) != 0 && GetServiceStatus(SBIESVC) != SERVICE_RUNNING)
 		Ops.append(QString::fromWCharArray(L"kmdutil.exe|start|" SBIESVC));
 	else if ((Component & eDriver) != 0 && GetServiceStatus(SBIEDRV) != SERVICE_RUNNING)
@@ -159,8 +160,8 @@ SB_RESULT(void*) CSbieUtils::ElevateOps(const QStringList& Ops)
 		return result;
 	}
 
-	wstring path = QCoreApplication::applicationFilePath().toStdWString();
-	wstring params = L"-assist \"" + Ops.join("\" \"").toStdWString() + L"\"";
+	std::wstring path = QCoreApplication::applicationFilePath().toStdWString();
+	std::wstring params = L"-assist \"" + Ops.join("\" \"").toStdWString() + L"\"";
 
 	SHELLEXECUTEINFO shex;
 	memset(&shex, 0, sizeof(SHELLEXECUTEINFO));
@@ -241,6 +242,93 @@ CSbieProgressPtr CSbieUtils::RunCommand(const QString& Command, bool noGui)
 	return pProgress;
 }
 
+int CSbieUtils::ExecCommand(const QString& Command, bool noGui, quint32 Timeout)
+{
+	STARTUPINFOW si = { 0 };
+	si.cb = sizeof(si);
+	if (noGui) {
+		si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+		si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+		si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+		si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+		si.wShowWindow = SW_HIDE;
+	}
+
+	PROCESS_INFORMATION pi = { 0 };
+	if (!CreateProcessW(NULL, (LPWSTR)Command.toStdWString().c_str(), NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi))
+		return -1;
+
+	int iRet = -2;
+	if (WaitForSingleObject(pi.hProcess, (DWORD)Timeout) == WAIT_OBJECT_0)
+	{
+		DWORD dwRet;
+		if (GetExitCodeProcess(pi.hProcess, &dwRet))
+			iRet = (int)dwRet;
+	}
+
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+
+	return iRet;
+}
+
+int CSbieUtils::ExecCommandEx(const QString& Command, QString* pOutput, quint32 Timeout)
+{
+	HANDLE stdoutReadHandle;
+	HANDLE stdoutWriteHandle;
+	SECURITY_ATTRIBUTES saAttr;
+	// Set the bInheritHandle flag so pipe handles are inherited.
+	saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+	saAttr.bInheritHandle = TRUE;
+	saAttr.lpSecurityDescriptor = nullptr;
+	// Create a pipe for the child process's STDOUT.
+	if (!CreatePipe(&stdoutReadHandle, &stdoutWriteHandle, &saAttr, 0))
+		return -4;
+	if (!SetHandleInformation(stdoutReadHandle, HANDLE_FLAG_INHERIT, 0))
+		return -4;
+
+	STARTUPINFOW si = { 0 };
+	si.cb = sizeof(si);
+	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+	si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+	si.hStdOutput = stdoutWriteHandle;
+	si.hStdError = stdoutWriteHandle;
+	si.wShowWindow = SW_HIDE;
+
+	PROCESS_INFORMATION pi = { 0 };
+	if (!CreateProcessW(NULL, (LPWSTR)Command.toStdWString().c_str(), NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi))
+		return -1;
+	
+	DWORD exitCode, dataSize;
+	do
+	{
+		// Check if the process is alive.
+		GetExitCodeProcess(pi.hProcess, &exitCode);
+
+		// Check if there is anything in the pipe.
+		if (!PeekNamedPipe(stdoutReadHandle, nullptr, 0, nullptr, &dataSize, nullptr))
+			return -3;
+		if (dataSize == 0)
+			Sleep(10);
+		else {
+			// Read the data out of the pipe.
+			CHAR buffer[4096] = { 0 };
+			if (!ReadFile(stdoutReadHandle, buffer, sizeof(buffer) - 1, &dataSize, nullptr))
+				return -3;
+				
+			pOutput->append(QString(buffer));
+		}
+	} while (exitCode == STILL_ACTIVE || dataSize != 0);
+
+	CloseHandle(stdoutReadHandle);
+	CloseHandle(stdoutWriteHandle);
+
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+
+	return (int)exitCode;
+}
+
 //////////////////////////////////////////////////////////////////////////////
 // Shell integration
 
@@ -250,7 +338,7 @@ QString CSbieUtils::GetContextMenuStartCmd()
 	HKEY hkey;
 	LONG rc = RegOpenKeyEx(HKEY_CURRENT_USER, key, 0, KEY_READ, &hkey);
 	if (rc != 0)
-		return false;
+		return QString();
 
 	ULONG type;
 	WCHAR path[512];
@@ -265,12 +353,12 @@ QString CSbieUtils::GetContextMenuStartCmd()
 
 void CSbieUtils::AddContextMenu(const QString& StartPath, const QString& RunStr, /*const QString& ExploreStr,*/ const QString& IconPath)
 {
-	wstring start_path = L"\"" + StartPath.toStdWString() + L"\"";
-	wstring icon_path = L"\"" + (IconPath.isEmpty() ? StartPath : IconPath).toStdWString() + L"\"";
+	std::wstring start_path = L"\"" + StartPath.toStdWString() + L"\"";
+	std::wstring icon_path = L"\"" + (IconPath.isEmpty() ? StartPath : IconPath).toStdWString() + L"\"";
 
 	CreateShellEntry(L"*", L"sandbox", RunStr.toStdWString(), icon_path, start_path + L" /box:__ask__ \"%1\" %*");
 
-	wstring explorer_path(512, L'\0');
+	std::wstring explorer_path(512, L'\0');
 
 	HKEY hkeyWinlogon;
 	LONG rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, L"software\\microsoft\\windows nt\\currentversion\\winlogon", 0, KEY_READ, &hkeyWinlogon);
@@ -296,7 +384,7 @@ void CSbieUtils::AddContextMenu(const QString& StartPath, const QString& RunStr,
 	CreateShellEntry(L"Folder", L"sandbox", RunStr.toStdWString(), icon_path, start_path + L" /box:__ask__ " + explorer_path + L" \"%1\""); // ExploreStr
 }
 
-void CSbieUtils::CreateShellEntry(const wstring& classname, const wstring& key, const wstring& cmdtext, const wstring& iconpath, const wstring& startcmd)
+void CSbieUtils::CreateShellEntry(const std::wstring& classname, const std::wstring& key, const std::wstring& cmdtext, const std::wstring& iconpath, const std::wstring& startcmd)
 {
 	HKEY hkey;
 	LONG rc = RegCreateKeyEx(HKEY_CURRENT_USER, (L"software\\classes\\" + classname + L"\\shell\\" + key).c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hkey, NULL);
@@ -340,8 +428,8 @@ bool CSbieUtils::HasContextMenu2()
 
 void CSbieUtils::AddContextMenu2(const QString& StartPath, const QString& RunStr, const QString& IconPath)
 {
-	wstring start_path = L"\"" + StartPath.toStdWString() + L"\"";
-	wstring icon_path = L"\"" + (IconPath.isEmpty() ? StartPath : IconPath).toStdWString() + L"\",-104";
+	std::wstring start_path = L"\"" + StartPath.toStdWString() + L"\"";
+	std::wstring icon_path = L"\"" + (IconPath.isEmpty() ? StartPath : IconPath).toStdWString() + L"\",-104";
 
 	CreateShellEntry(L"*", L"unbox", RunStr.toStdWString(), icon_path, start_path + L" /disable_force \"%1\" %*");
 }
@@ -387,7 +475,7 @@ bool CSbieUtils::CreateShortcut(CSbieAPI* pApi, QString LinkPath, const QString 
 		if (!workdir.isEmpty())
 			pShellLink->SetWorkingDirectory(workdir.toStdWString().c_str());
 		if (!LinkName.isEmpty()) {
-			QString desc = QString("%1 [%2]").arg(LinkName).arg(boxname.isEmpty() ? "DefaultBox" : boxname);
+			QString desc = QString("%1 [%2]").arg(LinkName).arg(boxname.isEmpty() ? pApi->GetGlobalSettings()->GetText("DefaultBox", "DefaultBox") : boxname);
 			pShellLink->SetDescription(desc.toStdWString().c_str());
 		}
 

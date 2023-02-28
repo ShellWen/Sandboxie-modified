@@ -186,8 +186,8 @@ typedef NTSTATUS (*P_NtCreateKeyTransacted)(
     IN  ULONG TitleIndex,
     IN  PUNICODE_STRING Class OPTIONAL,
     IN  ULONG CreateOptions,
-    OUT PULONG Disposition OPTIONAL,
-    IN  PVOID Transaction);
+    IN  PVOID Transaction,
+    OUT PULONG Disposition OPTIONAL);
 
 typedef NTSTATUS (*P_NtCreateMutant)(
     OUT PHANDLE MutantHandle,
@@ -231,6 +231,17 @@ typedef NTSTATUS (*P_NtCreateSection)(
     IN  ULONG PageAttributes,
     IN  ULONG SectionAttributes,
     IN  HANDLE FileHandle OPTIONAL);
+
+typedef NTSTATUS (*P_NtCreateSectionEx)(
+    OUT PHANDLE SectionHandle,
+    IN  ACCESS_MASK DesiredAccess,
+    IN  POBJECT_ATTRIBUTES ObjectAttributes OPTIONAL,
+    IN  PLARGE_INTEGER MaximumSize OPTIONAL,
+    IN  ULONG PageAttributes,
+    IN  ULONG SectionAttributes,
+    IN  HANDLE FileHandle OPTIONAL,
+    IN OUT PMEM_EXTENDED_PARAMETER ExtendedParameters,
+    IN ULONG ExtendedParameterCount);
 
 typedef NTSTATUS (*P_NtCreateSemaphore)(
     OUT PHANDLE SemaphoreHandle,
@@ -527,6 +538,32 @@ typedef NTSTATUS (*P_NtQuerySymbolicLinkObject)(
     IN OUT PUNICODE_STRING LinkTarget,
     OUT PULONG ReturnedLength);
 
+typedef NTSTATUS (*P_NtCreateDirectoryObject)(
+    PHANDLE DirectoryHandle,
+    ACCESS_MASK DesiredAccess,
+    POBJECT_ATTRIBUTES ObjectAttributes);
+
+typedef NTSTATUS (*P_NtCreateDirectoryObjectEx)(
+    PHANDLE DirectoryHandle,
+    ACCESS_MASK DesiredAccess,
+    POBJECT_ATTRIBUTES ObjectAttributes,
+    HANDLE ShadowDirectoryHandle,
+    ULONG Flags);
+
+typedef NTSTATUS (*P_NtOpenDirectoryObject)(
+    PHANDLE DirectoryHandle,
+    ACCESS_MASK DesiredAccess,
+    POBJECT_ATTRIBUTES ObjectAttributes);
+
+typedef NTSTATUS (*P_NtQueryDirectoryObject)(
+    HANDLE DirectoryHandle,
+    PVOID Buffer,
+    ULONG Length,
+    BOOLEAN ReturnSingleEntry,
+    BOOLEAN RestartScan,
+    PULONG Context,
+    PULONG ReturnLength);
+
 typedef NTSTATUS (*P_NtLoadDriver)(
     IN  PUNICODE_STRING RegistryPath);
 
@@ -547,7 +584,7 @@ typedef NTSTATUS (*P_NtLoadKey3)(
     IN  ULONG LoadArgumentCount, 
     IN  ACCESS_MASK DesiredAccess, 
     IN  HANDLE KeyHandle, 
-    IN  ULONG Unkown);
+    IN  ULONG Unknown);
 
 typedef NTSTATUS (*P_NtLoadKeyEx)(
     IN  POBJECT_ATTRIBUTES TargetKey,
@@ -646,6 +683,13 @@ typedef NTSTATUS (*P_NtOpenKeyTransacted)(
     OUT PHANDLE KeyHandle,
     IN  ACCESS_MASK DesiredAccess,
     IN  POBJECT_ATTRIBUTES ObjectAttributes,
+    IN  PVOID Transaction);
+
+typedef NTSTATUS (*P_NtOpenKeyTransactedEx)(
+    OUT PHANDLE KeyHandle,
+    IN  ACCESS_MASK DesiredAccess,
+    IN  POBJECT_ATTRIBUTES ObjectAttributes,
+    IN  ULONG OpenOptions,
     IN  PVOID Transaction);
 
 typedef NTSTATUS (*P_NtOpenMutant)(
@@ -992,6 +1036,16 @@ typedef NTSTATUS (*P_NtProtectVirtualMemory)(
     IN  OUT PSIZE_T RegionSize,
     IN  ULONG NewProtect,
     OUT PULONG OldProtect);
+
+typedef NTSTATUS (*P_NtAllocateVirtualMemoryEx)(
+    _In_ HANDLE ProcessHandle,
+    _Inout_ _At_ (*BaseAddress, _Readable_bytes_ (*RegionSize) _Writable_bytes_ (*RegionSize) _Post_readable_byte_size_ (*RegionSize)) PVOID* BaseAddress,
+    _Inout_ PSIZE_T RegionSize,
+    _In_ ULONG AllocationType,
+    _In_ ULONG PageProtection,
+    _Inout_updates_opt_(ExtendedParameterCount) PMEM_EXTENDED_PARAMETER ExtendedParameters,
+    _In_ ULONG ExtendedParameterCount
+    );
 
 typedef NTSTATUS (*P_NtWriteFile)(
     IN  HANDLE FileHandle,

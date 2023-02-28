@@ -12,7 +12,6 @@ HEADERS += ./MiscHelpers.h \
     ./Common/FlexError.h \
     ./Common/FlowLayout.h \
     ./Common/HistoryGraph.h \
-    ./Common/IconExtreactor.h \
     ./Common/qRC4.h \
     ./Common/Xml.h \
     ./Common/CheckableMessageBox.h \
@@ -35,7 +34,19 @@ HEADERS += ./MiscHelpers.h \
     ./Common/TreeWidgetEx.h \
     ./Common/CheckList.h \
     ./Common/NeonEffect.h \
-    ./Common/NetworkAccessManager.h
+    ./Common/NetworkAccessManager.h \
+    ./Common/MT/ThreadLock.h \
+    ./Archive/Archive.h \
+    ./Archive/ArchiveFS.h \
+    ./Archive/ArchiveExtractor.h \
+    ./Archive/ArchiveHelper.h \
+    ./Archive/ArchiveInterface.h \
+    ./Archive/ArchiveIO.h \
+    ./Archive/ArchiveOpener.h \
+    ./Archive/ArchiveThread.h \
+    ./Archive/ArchiveUpdater.h \
+    ./Archive/CachedArchive.h \
+    ./Archive/SplitFile.h
     
 SOURCES += ./MiscHelpers.cpp \
     ./stdafx.cpp \
@@ -46,7 +57,6 @@ SOURCES += ./MiscHelpers.cpp \
     ./Common/DebugHelpers.cpp \
     ./Common/Finder.cpp \
     ./Common/FlowLayout.cpp \
-    ./Common/IconExtreactor.cpp \
     ./Common/ItemChooser.cpp \
     ./Common/KeyValueInputDialog.cpp \
     ./Common/ListItemModel.cpp \
@@ -60,4 +70,16 @@ SOURCES += ./MiscHelpers.cpp \
     ./Common/SplitTreeView.cpp \
     ./Common/TabPanel.cpp \
     ./Common/TreeItemModel.cpp \
-    ./Common/Xml.cpp
+    ./Common/Xml.cpp \
+    ./Common/MT/ThreadLock.cpp \
+    ./Archive/Archive.cpp \
+    ./Archive/ArchiveFS.cpp \
+    ./Archive/ArchiveExtractor.cpp \
+    ./Archive/ArchiveHelper.cpp \
+    ./Archive/ArchiveInterface.cpp \
+    ./Archive/ArchiveOpener.cpp \
+    ./Archive/ArchiveThread.cpp \
+    ./Archive/ArchiveUpdater.cpp \
+    ./Archive/CachedArchive.cpp \
+    ./Archive/SplitFile.cpp
+    

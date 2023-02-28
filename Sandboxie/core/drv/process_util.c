@@ -357,11 +357,11 @@ _FX const WCHAR* Process_MatchImageAndGetValue(BOX *box, const WCHAR* value, con
 
 
 //---------------------------------------------------------------------------
-// Process_GetConf
+// Process_GetConfEx
 //---------------------------------------------------------------------------
 
 
-_FX const WCHAR* Process_GetConf(PROCESS *proc, const WCHAR* setting)
+_FX const WCHAR* Process_GetConfEx(BOX *box, const WCHAR *image_name, const WCHAR* setting)
 {
     ULONG index = 0;
     const WCHAR *value;
@@ -370,12 +370,12 @@ _FX const WCHAR* Process_GetConf(PROCESS *proc, const WCHAR* setting)
 
     for (index = 0; ; ++index) {
 
-        value = Conf_Get(proc->box->name, setting, index);
+        value = Conf_Get(box->name, setting, index);
         if (! value)
             break;
 
         ULONG level = -1;
-        value = Process_MatchImageAndGetValue(proc->box, value, proc->image_name, &level);
+        value = Process_MatchImageAndGetValue(box, value, image_name, &level);
         if (!value || level > found_level)
             continue;
         found_value = value;
@@ -387,18 +387,29 @@ _FX const WCHAR* Process_GetConf(PROCESS *proc, const WCHAR* setting)
 
 
 //---------------------------------------------------------------------------
-// Process_GetConf_bool
+// Process_GetConf
 //---------------------------------------------------------------------------
 
 
-_FX BOOLEAN Process_GetConf_bool(PROCESS *proc, const WCHAR* setting, BOOLEAN def)
+_FX const WCHAR* Process_GetConf(PROCESS* proc, const WCHAR* setting)
+{
+    return Process_GetConfEx(proc->box, proc->image_name, setting);
+}
+
+
+//---------------------------------------------------------------------------
+// Process_GetConfEx_bool
+//---------------------------------------------------------------------------
+
+
+_FX BOOLEAN Process_GetConfEx_bool(BOX *box, const WCHAR *image_name, const WCHAR* setting, BOOLEAN def)
 {
     const WCHAR *value;
     BOOLEAN retval;
 
     Conf_AdjustUseCount(TRUE);
 
-    value = Process_GetConf(proc, setting);
+    value = Process_GetConfEx(box, image_name, setting);
 
     retval = def;
     if (value) {
@@ -415,12 +426,23 @@ _FX BOOLEAN Process_GetConf_bool(PROCESS *proc, const WCHAR* setting, BOOLEAN de
 
 
 //---------------------------------------------------------------------------
+// Process_GetConf_bool
+//---------------------------------------------------------------------------
+
+
+_FX BOOLEAN Process_GetConf_bool(PROCESS* proc, const WCHAR* setting, BOOLEAN def)
+{
+    return Process_GetConfEx_bool(proc->box, proc->image_name, setting, def);
+}
+
+
+//---------------------------------------------------------------------------
 // Process_GetPaths
 //---------------------------------------------------------------------------
 
 
 _FX BOOLEAN Process_GetPaths(
-    PROCESS *proc, LIST *list, const WCHAR *setting_name, BOOLEAN AddStar)
+    PROCESS *proc, LIST *list, const WCHAR *section_name, const WCHAR *setting_name, BOOLEAN AddStar)
 {
     ULONG index;
     const WCHAR *value;
@@ -439,7 +461,7 @@ _FX BOOLEAN Process_GetPaths(
         // get next configuration setting for this path list
         //
 
-        value = Conf_Get(proc->box->name, setting_name, index);
+        value = Conf_Get(section_name, setting_name, index);
         if (! value)
             break;
 
@@ -477,6 +499,7 @@ _FX BOOLEAN Process_GetPaths(
 //---------------------------------------------------------------------------
 
 
+#ifndef USE_MATCH_PATH_EX
 _FX BOOLEAN Process_GetPaths2(
     PROCESS *proc, LIST *list, LIST *list2,
     const WCHAR *setting_name, BOOLEAN AddStar)
@@ -532,6 +555,33 @@ _FX BOOLEAN Process_GetPaths2(
 
     return TRUE;
 }
+#endif
+
+
+//---------------------------------------------------------------------------
+// Process_GetTemplatePaths
+//---------------------------------------------------------------------------
+
+
+#ifdef USE_TEMPLATE_PATHS
+BOOLEAN Process_GetTemplatePaths(PROCESS *proc, LIST *list, const WCHAR *setting_name)
+{
+    BOOLEAN ok;
+
+    ok = Process_GetPaths(proc, list, L"TemplateDefaultPaths", setting_name, FALSE);
+
+    if (ok && proc->restrict_devices)
+        ok = Process_GetPaths(proc, list, L"TemplateSModPaths", setting_name, FALSE);
+
+    if (ok && proc->use_privacy_mode)
+        ok = Process_GetPaths(proc, list, L"TemplatePModPaths", setting_name, FALSE);
+
+    if (ok && proc->bAppCompartment)
+        ok = Process_GetPaths(proc, list, L"TemplateAppCPaths", setting_name, FALSE);
+
+    return ok;
+}
+#endif
 
 
 //---------------------------------------------------------------------------
@@ -556,7 +606,7 @@ _FX BOOLEAN Process_AddPath(
     // if this is a file setting, also check the path for reparse points
     //
 
-    if (setting_name) {
+    if (setting_name && AddStar) {
 
         const WCHAR *setting_name_ptr = setting_name;
         if (_wcsnicmp(setting_name, Process_Normal, 6) == 0 ||
@@ -572,10 +622,11 @@ _FX BOOLEAN Process_AddPath(
 
         if (setting_name_ptr) {
 
-            if (_wcsnicmp(setting_name_ptr, L"Key", 3) == 0)
+            if (_wcsnicmp(setting_name_ptr, L"Key", 3) == 0
+                  || _wcsnicmp(setting_name_ptr, L"Conf", 4) == 0) {
                 RemoveBackslashes = TRUE;
 
-            else if (_wcsnicmp(setting_name_ptr, L"File", 4) == 0
+            } else if (_wcsnicmp(setting_name_ptr, L"File", 4) == 0
                   || _wcsnicmp(setting_name_ptr, L"Pipe", 4) == 0) {
 
                 RemoveBackslashes = TRUE;
@@ -870,7 +921,7 @@ _FX ULONG Process_MatchPathEx(
     ULONG path_lwr_len;
     int match_len;
     ULONG level;
-    BOOLEAN exact;
+    ULONG flags;
     USHORT wildc;
     ULONG mp_flags;
 
@@ -893,7 +944,7 @@ _FX ULONG Process_MatchPathEx(
     //
     // Rule priorities are implemented based on their specificity and match level with the process.
     // The specificity describes how well a pattern matches a given path, 
-    // i.e. how many charakters of the path it matches, disregarding the last wild card.
+    // i.e. how many characters of the path it matches, disregarding the last wild card.
     // The process match level describes in which way a rule applies to a given process:
     //  0 - exact match, eg. ...Path=program.exe,...
     //  1 - match by negation, eg. ...Path=!program.exe,...
@@ -906,15 +957,15 @@ _FX ULONG Process_MatchPathEx(
     // 
     // If a rule ends with an * it is not exact and will be overruled by an exact rule
     // 
-    // Adding UseRuleSpecificity=n disables this behavioure and reverts to the old classical one
+    // Adding UseRuleSpecificity=n disables this behaviour and reverts to the old classical one
     //
 
     //
-    // set default behavioure 
+    // set default behaviour
     //
 
     level = 3; // 3 - global default - lower is better, 3 is max value
-    exact = FALSE;
+    flags = 0;
     wildc = -1; // lower is better
     match_len = 0;
     if (path_code == L'n' && proc->file_block_network_files) {
@@ -925,7 +976,8 @@ _FX ULONG Process_MatchPathEx(
 
         mp_flags = TRUE_PATH_CLOSED_FLAG | COPY_PATH_CLOSED_FLAG;
     }
-    else if (!proc->use_privacy_mode || path_code == L'i') {
+    //else if (!proc->use_privacy_mode || path_code == L'i') {
+    else {
 
         //
         // in normal sandbox mode we have read access to all locations unless restricted,
@@ -934,57 +986,59 @@ _FX ULONG Process_MatchPathEx(
 
         mp_flags = TRUE_PATH_READ_FLAG | COPY_PATH_OPEN_FLAG; // normal mode
     }
-    else {
-
-        //
-        // in privacy mode we only have read access to selected generic locations,
-        // and read access to user data must be explicityl grated,
-        // also all writes are redirected to the sandbox
-        //
-        // To enable privacy enchanced mode add UsePrivacyMode=y 
-        //
-
-        mp_flags = TRUE_PATH_CLOSED_FLAG | COPY_PATH_OPEN_FLAG; // write path mode
-    }
+    //else {
+    //
+    //    //
+    //    // in privacy mode we only have read access to selected generic locations,
+    //    // and read access to user data must be explicityl grated,
+    //    // also all writes are redirected to the sandbox
+    //    //
+    //    // Note: as of 5.60.1 all locations are locked down explicitly while the root mode remains normal
+    //    //
+    //    // To enable privacy enhanced mode add UsePrivacyMode=y 
+    //    //
+    //
+    //    mp_flags = TRUE_PATH_CLOSED_FLAG | COPY_PATH_OPEN_FLAG; // write path mode
+    //}
 
     //
     // closed path list, in non specific mode has the higher priority
     // these paths are inaccessible for true and copy locations 
     //
 
-    if (Pattern_MatchPathListEx(path_lwr, path_len, closed_list, &level, &match_len, &exact, &wildc, patsrc)) {
+    if (Pattern_MatchPathListEx(path_lwr, path_len, closed_list, &level, &match_len, &flags, &wildc, patsrc)) {
         mp_flags = TRUE_PATH_CLOSED_FLAG | COPY_PATH_CLOSED_FLAG;
         if (!proc->use_rule_specificity) goto finish;
     }
     
     //
     // write path list, behaved on the driver side like closed path list
-    // these paths allow read acces to true location and read/write access to copy location
+    // these paths allow read access to true location and read/write access to copy location
     //
     
-    if (Pattern_MatchPathListEx(path_lwr, path_len, write_list, &level, &match_len, &exact, &wildc, patsrc)) {
+    if (Pattern_MatchPathListEx(path_lwr, path_len, write_list, &level, &match_len, &flags, &wildc, patsrc)) {
         mp_flags = TRUE_PATH_CLOSED_FLAG | COPY_PATH_OPEN_FLAG;
         if (!proc->use_rule_specificity) goto finish;
     }
     
     //
-    // read path list behaves in the kernel like the default normal behavioure
-    // these paths allow read only acces to true path and copy locations
+    // read path list behaves in the kernel like the default normal behaviour
+    // these paths allow read only access to true path and copy locations
     //
     
-    if (Pattern_MatchPathListEx(path_lwr, path_len, read_list, &level, &match_len, &exact, &wildc, patsrc)) {
+    if (Pattern_MatchPathListEx(path_lwr, path_len, read_list, &level, &match_len, &flags, &wildc, patsrc)) {
         mp_flags = TRUE_PATH_READ_FLAG | COPY_PATH_READ_FLAG;
         if (!proc->use_rule_specificity) goto finish;
     }
     
     //
-    // normal path list restores normal behavioure when used in specific mode
+    // normal path list restores normal behaviour when used in specific mode
     // these paths allow reading the true location and write to the copy location
     //
 
-    if (Pattern_MatchPathListEx(path_lwr, path_len, normal_list, &level, &match_len, &exact, &wildc, patsrc)) {
+    if (Pattern_MatchPathListEx(path_lwr, path_len, normal_list, &level, &match_len, &flags, &wildc, patsrc)) {
         mp_flags = TRUE_PATH_READ_FLAG | COPY_PATH_OPEN_FLAG;
-        // dont goto finish as open can overwrite this 
+        // don't goto finish as open can overwrite this 
     }
     
     //
@@ -992,7 +1046,7 @@ _FX ULONG Process_MatchPathEx(
     // these paths allow read/write access to the true location
     //
 
-    if (Pattern_MatchPathListEx(path_lwr, path_len, open_list, &level, &match_len, &exact, &wildc, patsrc)) {
+    if (Pattern_MatchPathListEx(path_lwr, path_len, open_list, &level, &match_len, &flags, &wildc, patsrc)) {
         mp_flags = TRUE_PATH_OPEN_FLAG;
     }
     
